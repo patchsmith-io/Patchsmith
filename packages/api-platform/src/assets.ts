@@ -12,6 +12,9 @@ import type { Storage } from "@patchsmith/storage";
 import { Effect } from "effect";
 import { z } from "zod";
 
+import { PlatformHttp, runPlatform } from "#services";
+import type { PlatformEffectContext } from "#services";
+
 const isObjectValue = <TValue>(value: TValue): value is TValue & object =>
   typeof value === "object" && value !== null;
 
@@ -43,7 +46,8 @@ const storageFailure = (cause: unknown) => {
 const loadAsset = (
   request: Request,
   identity: AssetIdentity,
-  storage: Storage
+  storage: Storage,
+  fetch: typeof globalThis.fetch
 ) =>
   Effect.gen(function* loadAssetValue() {
     const { key } = identity;
@@ -107,20 +111,27 @@ const loadAsset = (
 
 export const handleAssetRequest = async (
   request: Request,
-  storage: Storage | null
+  storage: Storage | null,
+  context?: Partial<PlatformEffectContext>
 ): Promise<Response> => {
   const program = Effect.gen(function* program() {
-    const identity = yield* nodeAssetRequest(request);
+    const { fetch } = yield* PlatformHttp;
 
-    if (!storage) {
-      return yield* Effect.fail(new AssetDeliveryError(503));
-    }
+    return yield* assetResponse(
+      Effect.gen(function* deliverAsset() {
+        const identity = yield* nodeAssetRequest(request);
 
-    return yield* serveAssetRequest(request, {
-      identity: Effect.succeed(identity),
-      load: (asset) => loadAsset(request, asset, storage),
-    });
+        if (!storage) {
+          return yield* Effect.fail(new AssetDeliveryError(503));
+        }
+
+        return yield* serveAssetRequest(request, {
+          identity: Effect.succeed(identity),
+          load: (asset) => loadAsset(request, asset, storage, fetch),
+        });
+      })
+    );
   });
 
-  return await Effect.runPromise(assetResponse(program));
+  return await runPlatform(program, context, request.signal);
 };

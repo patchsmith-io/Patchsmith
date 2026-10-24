@@ -12,6 +12,7 @@ import {
 import { organization } from "@patchsmith/db/schema/auth";
 import { project as projectTable } from "@patchsmith/db/schema/project";
 import { eq } from "drizzle-orm";
+import { Effect } from "effect";
 import {
   afterEach,
   beforeEach,
@@ -23,6 +24,7 @@ import {
 
 import type { Context } from "#context";
 import { createTestDb } from "#test/pglite";
+import { testServices } from "#test/services";
 
 const requireValue = <T>(value: T | null | undefined): T => {
   if (value === null || value === undefined) {
@@ -31,18 +33,6 @@ const requireValue = <T>(value: T | null | undefined): T => {
 
   return value;
 };
-
-vi.mock("@patchsmith/kv", () => ({ getKV: () => null }));
-
-// SAFETY: The fixture controls this value; this assertion bridges the minimal test double to the API whose behavior is asserted below.
-const testState = vi.hoisted(() => ({ db: undefined as unknown }));
-
-vi.mock("@patchsmith/db", () => ({
-  createDb: () => testState.db,
-  get db() {
-    return testState.db;
-  },
-}));
 
 const { deploymentRouter, mapReturnedFilesByAssetPath } =
   await import("./deployments");
@@ -64,7 +54,11 @@ const productionScope = {
   value: { environment: "production" },
 };
 
+const http = vi.fn<typeof fetch>();
+let services: ReturnType<typeof testServices>;
+
 const publishContextImplementation = (downloadUrl: string): Context => ({
+  ...services,
   organization: {
     createdAt: new Date(),
     id: organizationId,
@@ -101,10 +95,15 @@ describe("platform deployment uploads", () => {
   let db: Awaited<ReturnType<typeof createTestDb>>["db"];
 
   beforeEach(async () => {
+    http.mockReset();
     const testDb = await createTestDb();
     ({ client } = testDb);
     ({ db } = testDb);
-    testState.db = db;
+    services = testServices({
+      database: db,
+      fetch: http,
+      runtime: { enqueueWarmup: () => Effect.void },
+    });
 
     await db.insert(organization).values({
       createdAt: new Date(),
@@ -327,7 +326,7 @@ describe("platform deployment uploads", () => {
         }))
       );
 
-      const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
+      const fetchMock = http.mockImplementation(
         asyncFixture((input) => {
           const url = input instanceof Request ? input.url : String(input);
 
@@ -532,9 +531,9 @@ describe("platform deployment uploads", () => {
         );
       }
 
-      const fetchMock = vi
-        .spyOn(globalThis, "fetch")
-        .mockImplementation(asyncFixture(() => new Response("client-code")));
+      const fetchMock = http.mockImplementation(
+        asyncFixture(() => new Response("client-code"))
+      );
 
       const published = await call(
         deploymentRouter.publish,
@@ -767,11 +766,9 @@ describe("platform deployment uploads", () => {
       { highWaterMark: 0 }
     );
 
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(
-        new Response(body, { headers: { "Content-Encoding": "gzip" } })
-      );
+    const fetchMock = http.mockResolvedValue(
+      new Response(body, { headers: { "Content-Encoding": "gzip" } })
+    );
 
     await expect(
       call(
@@ -813,7 +810,7 @@ describe("platform deployment uploads", () => {
   it("publishes gzip client code whose decoded size is exactly 10 MiB", async () => {
     const decoded = new Uint8Array(maxDeploymentBytes);
     const { context, created } = await createGzipClientDeployment(decoded);
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    http.mockResolvedValue(
       new Response(decoded, { headers: { "Content-Encoding": "gzip" } })
     );
 
@@ -857,7 +854,7 @@ describe("platform deployment uploads", () => {
               status: failure === "upstream-failure" ? 503 : 200,
             });
 
-      vi.spyOn(globalThis, "fetch").mockResolvedValue(response);
+      http.mockResolvedValue(response);
       await expect(
         call(
           deploymentRouter.publish,
@@ -908,6 +905,7 @@ describe("platform deployment uploads", () => {
     );
 
     const context = {
+      ...services,
       organization: {
         createdAt: new Date(),
         id: organizationId,
@@ -1000,6 +998,7 @@ describe("platform deployment uploads", () => {
     );
 
     const context = {
+      ...services,
       organization: {
         createdAt: new Date(),
         id: organizationId,
@@ -1075,6 +1074,7 @@ describe("platform deployment uploads", () => {
     const createUploadUrl = vi.fn();
 
     const context = {
+      ...services,
       organization: {
         createdAt: new Date(),
         id: organizationId,
@@ -1135,7 +1135,7 @@ describe("platform deployment uploads", () => {
   it("rejects non-HTTPS logo inspection URLs before fetching", async () => {
     const deployment = await createLogoDeployment();
     const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
+    http.mockImplementation(fetchMock);
 
     await expect(
       call(
@@ -1153,31 +1153,23 @@ describe("platform deployment uploads", () => {
   it("aborts logo inspection while reading the response body", async () => {
     const deployment = await createLogoDeployment();
     vi.useFakeTimers();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(
-        asyncFixture((_url: URL, init?: RequestInit) => ({
-          arrayBuffer: async () =>
-            await (async () => {
-              const {
-                promise: pendingPromise,
-                resolve: _resolve,
-                reject,
-              } = Promise.withResolvers<ArrayBuffer>();
-
-              try {
-                init?.signal?.addEventListener("abort", () => {
-                  reject(new DOMException("Aborted", "AbortError"));
-                });
-              } catch (error) {
-                reject(error);
-              }
-
-              return await pendingPromise;
-            })(),
-          ok: true,
-        }))
-      )
+    http.mockImplementation(
+      async (_input, init) =>
+        await Promise.resolve(
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                init?.signal?.addEventListener(
+                  "abort",
+                  () => {
+                    controller.error(new DOMException("Aborted", "AbortError"));
+                  },
+                  { once: true }
+                );
+              },
+            })
+          )
+        )
     );
 
     const publish = call(
@@ -1192,5 +1184,62 @@ describe("platform deployment uploads", () => {
     const advanceTimers = vi.advanceTimersByTimeAsync(10_000);
     await expect(publish).rejects.toThrow("Aborted");
     await advanceTimers;
+  });
+  it("restores retryable state on cancellation and ignores late storage completion", async () => {
+    const deployment = await createLogoDeployment();
+    const waiting = Promise.withResolvers<boolean>();
+
+    const released =
+      Promise.withResolvers<Awaited<ReturnType<Context["storage"]["head"]>>>();
+
+    const context = publishContext("https://uploads.example/logo.svg");
+    context.storage.head = vi.fn(async () => {
+      waiting.resolve(true);
+
+      return await released.promise;
+    });
+    const controller = new AbortController();
+
+    const publication = call(
+      deploymentRouter.publish,
+      {
+        body: { rollout: true, scope: productionScope },
+        params: { deploymentId: deployment.id },
+      },
+      { context, signal: controller.signal }
+    );
+
+    const completed = expect(publication).rejects.toBeDefined();
+    await waiting.promise;
+    controller.abort(new Error("Request cancelled"));
+    await completed;
+
+    const failed = await db.query.appDeploymentFile.findFirst({
+      where: { appDeploymentId: deployment.id, status: "failed" },
+    });
+
+    if (!failed) {
+      throw new Error("Missing failed verification record");
+    }
+
+    const persisted = await db.query.appDeployment.findFirst({
+      where: { id: deployment.id },
+    });
+
+    expect(persisted?.status).toBe("uploading");
+    released.resolve({
+      checksumSha256: logoChecksumBase64,
+      contentLength: 11,
+      contentType: "image/svg+xml",
+      key: "late-storage-completion",
+    });
+    // A database read queues behind any accidental write after the released storage promise.
+    await db.query.appDeploymentFile.findMany();
+
+    const afterCompletion = await db.query.appDeploymentFile.findFirst({
+      where: { id: failed.id },
+    });
+
+    expect(afterCompletion?.status).toBe("failed");
   });
 });

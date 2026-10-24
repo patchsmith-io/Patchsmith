@@ -1,3 +1,4 @@
+import { handlerGen, middlewareGen } from "@orpc/experimental-effect";
 import { openapi } from "@orpc/openapi";
 import { ORPCError } from "@orpc/server";
 import type { AppDeploymentMetadata } from "@patchsmith/api-utils/app-auth";
@@ -5,20 +6,29 @@ import {
   APP_PUBLIC_KEYS_CACHE_SECONDS,
   appDeploymentMetadata,
 } from "@patchsmith/api-utils/app-auth";
-import { db } from "@patchsmith/db";
 import type { App, AppDeployment } from "@patchsmith/db/schema/apps";
+import { Effect } from "effect";
 import { z } from "zod";
 
 import { appSelectorSchema } from "#app-selector";
 import type { Context } from "#context";
-import { env } from "#env";
+import { env as platformEnv } from "#env";
 import { o, protectedRouter, requireAppInScopes } from "#procedures";
-import { appRuntimePublicKeys, issueAppRuntimeToken } from "#runtime/auth";
+import { appRuntimePublicKeys } from "#runtime/auth";
 import { scopeSchema, scopesSchema } from "#scope";
+import {
+  attempt,
+  PlatformDatabase,
+  PlatformConfig,
+  PlatformRuntime,
+  runPlatform,
+} from "#services";
 
-export const appRuntimeKeysResponse = (): ReturnType<typeof Response.json> => {
+export const appRuntimeKeysResponse = (
+  config = platformEnv
+): ReturnType<typeof Response.json> => {
   try {
-    return Response.json(appRuntimePublicKeys(), {
+    return Response.json(appRuntimePublicKeys(config), {
       headers: {
         "cache-control": `public, max-age=${APP_PUBLIC_KEYS_CACHE_SECONDS}`,
       },
@@ -33,7 +43,8 @@ export const appRuntimeKeysResponse = (): ReturnType<typeof Response.json> => {
 
 /** Public routes must be dispatched before constructing the authenticated platform context. */
 export const handlePublicRuntimeRequest = (
-  request: Request
+  request: Request,
+  config = platformEnv
 ): Response | undefined => {
   if (
     request.method !== "GET" ||
@@ -42,7 +53,7 @@ export const handlePublicRuntimeRequest = (
     return undefined;
   }
 
-  return appRuntimeKeysResponse();
+  return appRuntimeKeysResponse(config);
 };
 
 export const runtimeViewerSchema = z.object({
@@ -90,78 +101,88 @@ type RuntimeApp = Pick<z.infer<typeof App>, "id" | "shortId" | "scope"> & {
 };
 
 /** Reuse the already authorized discovery row instead of looking up each app again. */
-export const createRuntimeSession = async (
+export const createRuntimeSessionEffect = (
   context: Pick<Context, "project">,
   app: RuntimeApp,
   input: z.infer<typeof runtimeViewerSchema> & RuntimeHookGrant
-) => {
-  const deployment = app.currentDeployment;
+) =>
+  Effect.gen(function* createRuntimeSession() {
+    const env = yield* PlatformConfig;
 
-  if (!deployment) {
-    throw new ORPCError("NOT_FOUND", {
-      message: "App has no published deployment.",
-    });
-  }
+    const deployment = app.currentDeployment;
 
-  if (input.hook !== undefined && !deployment.hooks.includes(input.hook)) {
-    throw new ORPCError("NOT_FOUND", {
-      message: "App deployment does not implement this hook.",
-    });
-  }
+    if (!deployment) {
+      return yield* Effect.fail(
+        new ORPCError("NOT_FOUND", {
+          message: "App has no published deployment.",
+        })
+      );
+    }
 
-  const runtime = new URL(
-    env.APP_RUNTIME_URL ??
-      `https://${context.project.shortId}.${env.ASSET_DOMAIN ?? "tailorkit.app"}`
-  );
+    if (input.hook !== undefined && !deployment.hooks.includes(input.hook)) {
+      return yield* Effect.fail(
+        new ORPCError("NOT_FOUND", {
+          message: "App deployment does not implement this hook.",
+        })
+      );
+    }
 
-  const localRuntime =
-    runtime.protocol === "http:" &&
-    ["localhost", "127.0.0.1", "[::1]"].includes(runtime.hostname);
+    const runtime = new URL(
+      env.APP_RUNTIME_URL ??
+        `https://${context.project.shortId}.${env.ASSET_DOMAIN ?? "tailorkit.app"}`
+    );
 
-  if (
-    runtime.username ||
-    runtime.password ||
-    runtime.search ||
-    runtime.hash ||
-    (runtime.protocol !== "https:" && !localRuntime)
-  ) {
-    throw new ORPCError("SERVICE_UNAVAILABLE", {
-      message: "Invalid app runtime configuration.",
-    });
-  }
+    const localRuntime =
+      runtime.protocol === "http:" &&
+      ["localhost", "127.0.0.1", "[::1]"].includes(runtime.hostname);
 
-  const projectPath = localRuntime ? `/p/${context.project.shortId}` : "";
-  const url = new URL(`${projectPath}/a/${app.shortId}/rpc`, runtime);
+    if (
+      runtime.username ||
+      runtime.password ||
+      runtime.search ||
+      runtime.hash ||
+      (runtime.protocol !== "https:" && !localRuntime)
+    ) {
+      return yield* Effect.fail(
+        new ORPCError("SERVICE_UNAVAILABLE", {
+          message: "Invalid app runtime configuration.",
+        })
+      );
+    }
 
-  // Each app belongs to one installation scope. Resolve identity from the authorized
-  // database record, never from browser input or the ordering of the viewer's scopes.
-  const hookGrant: RuntimeHookGrant = {};
+    const projectPath = localRuntime ? `/p/${context.project.shortId}` : "";
+    const url = new URL(`${projectPath}/a/${app.shortId}/rpc`, runtime);
 
-  if (input.hook !== undefined) {
-    hookGrant.hook = input.hook;
-  }
+    // Each app belongs to one installation scope. Resolve identity from the authorized
+    // database record, never from browser input or the ordering of the viewer's scopes.
+    const hookGrant: RuntimeHookGrant = {};
 
-  const identity = {
-    ...hookGrant,
-    appId: app.id,
-    appShortId: app.shortId,
-    deploymentId: deployment.id,
-    installationId: app.id,
-    projectId: context.project.id,
-    projectShortId: context.project.shortId,
-    scope: app.scope,
-    subjectId: input.subjectId,
-    toolUrl: input.toolUrl,
-  };
+    if (input.hook !== undefined) {
+      hookGrant.hook = input.hook;
+    }
 
-  const session = await issueAppRuntimeToken(identity);
+    const identity = {
+      ...hookGrant,
+      appId: app.id,
+      appShortId: app.shortId,
+      deploymentId: deployment.id,
+      installationId: app.id,
+      projectId: context.project.id,
+      projectShortId: context.project.shortId,
+      scope: app.scope,
+      subjectId: input.subjectId,
+      toolUrl: input.toolUrl,
+    };
 
-  return {
-    ...session,
-    identity: { ...identity, expiresAt: session.expiresAt },
-    url: url.href,
-  };
-};
+    const runtimeService = yield* PlatformRuntime;
+    const session = yield* runtimeService.issueToken(identity);
+
+    return {
+      ...session,
+      identity: { ...identity, expiresAt: session.expiresAt },
+      url: url.href,
+    };
+  });
 
 // Hosts authenticate with their project key and assert membership using verified scopes.
 export const runtimeSession = protectedRouter
@@ -186,9 +207,17 @@ export const runtimeSession = protectedRouter
   )
   .output(z.object({ body: runtimeSessionSchema }))
   .use(requireAppInScopes.adaptInput(({ body }) => body))
-  .handler(async ({ context, input }) => ({
-    body: await createRuntimeSession(context, context.app, input.body),
-  }));
+  .handler(
+    handlerGen(function* runtimeSession({ context, input }) {
+      return {
+        body: yield* createRuntimeSessionEffect(
+          context,
+          context.app,
+          input.body
+        ),
+      };
+    })
+  );
 
 // Trusted runtime metadata: return the authorized private R2 key without minting a download URL.
 export const getRuntimeBundle = protectedRouter
@@ -199,94 +228,112 @@ export const getRuntimeBundle = protectedRouter
   .output(z.object({ body: appDeploymentMetadata }))
   .use(
     o
-      .middleware(async ({ context, next }, input: { appId: string }) => {
-        if (!(context.runtimeService === true)) {
-          throw new ORPCError("FORBIDDEN");
-        }
+      .middleware(
+        middlewareGen(function* getRuntimeBundle(
+          { context, next },
+          input: { appId: string }
+        ) {
+          const db = yield* PlatformDatabase;
 
-        const app = await db.query.app.findFirst({
-          where: { id: input.appId, projectId: context.project.id },
-          with: {
-            currentDeployment: {
-              where: { status: "published" },
-              with: { app: { columns: { shortId: true } } },
-            },
-          },
-        });
+          if (!(context.runtimeService === true)) {
+            return yield* Effect.fail(new ORPCError("FORBIDDEN"));
+          }
 
-        if (!app) {
-          throw new ORPCError("NOT_FOUND");
-        }
+          const app = yield* attempt(
+            async () =>
+              await db.query.app.findFirst({
+                where: { id: input.appId, projectId: context.project.id },
+                with: {
+                  currentDeployment: {
+                    where: { status: "published" },
+                    with: { app: { columns: { shortId: true } } },
+                  },
+                },
+              })
+          );
 
-        return await next({ context: { ...context, app } });
-      })
+          if (!app) {
+            return yield* Effect.fail(new ORPCError("NOT_FOUND"));
+          }
+
+          // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- oRPC preserves downstream procedure failures.
+          return yield* next({ context: { ...context, app } });
+        })
+      )
       .adaptInput(({ params }) => ({ appId: params.appId }))
   )
-  .handler(async ({ context }) => {
-    const deployment = context.app.currentDeployment;
+  .handler(
+    handlerGen(function* getRuntimeBundle({ context }) {
+      const db = yield* PlatformDatabase;
 
-    if (!deployment) {
-      throw new ORPCError("NOT_FOUND");
-    }
+      const deployment = context.app.currentDeployment;
 
-    const assetAppId = deployment.app?.shortId ?? context.app.shortId;
-    const key = `projects/${context.project.shortId}/apps/${assetAppId}/deployments/${deployment.shortId}/server/server.js`;
+      if (!deployment) {
+        return yield* Effect.fail(new ORPCError("NOT_FOUND"));
+      }
 
-    const file = await db.query.appDeploymentFile.findFirst({
-      where: {
-        appDeploymentId: deployment.id,
-        objectKey: key,
-        status: "verified",
-      },
-    });
+      const assetAppId = deployment.app?.shortId ?? context.app.shortId;
+      const key = `projects/${context.project.shortId}/apps/${assetAppId}/deployments/${deployment.shortId}/server/server.js`;
 
-    if (
-      !(
-        file?.checksum !== undefined &&
-        file?.checksum !== null &&
-        file?.checksum !== ""
-      )
-    ) {
-      throw new ORPCError("NOT_FOUND");
-    }
+      const file = yield* attempt(
+        async () =>
+          await db.query.appDeploymentFile.findFirst({
+            where: {
+              appDeploymentId: deployment.id,
+              objectKey: key,
+              status: "verified",
+            },
+          })
+      );
 
-    return {
-      body: {
-        appId: context.app.id,
-        checksum: file.checksum,
-        contentEncoding: file.encoding === "gzip" ? "gzip" : undefined,
-        contentLength: file.contentLength,
-        deploymentId: deployment.id,
-        objectKey: file.objectKey,
-        projectId: context.project.id,
-      },
-    };
-  });
+      if (
+        !(
+          file?.checksum !== undefined &&
+          file?.checksum !== null &&
+          file?.checksum !== ""
+        )
+      ) {
+        return yield* Effect.fail(new ORPCError("NOT_FOUND"));
+      }
+
+      return {
+        body: {
+          appId: context.app.id,
+          checksum: file.checksum,
+          contentEncoding: file.encoding === "gzip" ? "gzip" : undefined,
+          contentLength: file.contentLength,
+          deploymentId: deployment.id,
+          objectKey: file.objectKey,
+          projectId: context.project.id,
+        },
+      };
+    })
+  );
 
 /** Enqueue independently retryable warm-up steps after deployment selection. */
+export const publishRuntimeMetadataEffect = (metadata: AppDeploymentMetadata) =>
+  Effect.gen(function* publishRuntimeMetadata() {
+    const runtime = yield* PlatformRuntime;
+    yield* runtime
+      .enqueueWarmup(metadata)
+      .pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("Could not enqueue app deployment warm-up", error)
+        )
+      );
+  });
+
 export const publishRuntimeMetadata = async (
   metadata: AppDeploymentMetadata,
-  _appShortId: string
+  _appShortId: string,
+  context?: Context
 ) => {
-  if (env.APP_RUNTIME_SERVICE_TOKEN === undefined) {
-    return;
-  }
-
-  try {
-    const [{ start }, { warmAppDeployment }] = await Promise.all([
-      import("workflow/api"),
-      import("#runtime/deployment-workflow"),
-    ]);
-
-    await start(warmAppDeployment, [
-      {
-        appId: metadata.appId,
-        deploymentId: metadata.deploymentId,
-        projectId: metadata.projectId,
-      },
-    ]);
-  } catch (error) {
-    // Publication remains usable: new token hints synchronously discover its code.
-    console.error("Could not enqueue app deployment warm-up", error);
-  }
+  await runPlatform(publishRuntimeMetadataEffect(metadata), context);
 };
+
+export const createRuntimeSession = async (
+  context: Pick<Context, "project" | "effect/context">,
+  app: RuntimeApp,
+  input: z.infer<typeof runtimeViewerSchema> & RuntimeHookGrant
+) =>
+  await runPlatform(createRuntimeSessionEffect(context, app, input), context);

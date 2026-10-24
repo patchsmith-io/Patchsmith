@@ -1,20 +1,30 @@
 import { OpenAPIHandler } from "@orpc/openapi/fetch";
 import { call, asyncIteratorToUnproxiedDataStream } from "@orpc/server";
-import type { appAgent } from "@patchsmith/agent-fx/workflows";
 import { AppAgentThreadError } from "@patchsmith/agent/threads";
-import type * as threadsModule from "@patchsmith/agent/threads";
 import {
   issueAgentToken,
   verifyAgentToken,
 } from "@patchsmith/api-utils/agent-token";
 import { asyncFixture } from "@patchsmith/config/testing";
 import { readUIMessageStream } from "ai";
-import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { Effect } from "effect";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vite-plus/test";
 
 import { createAgentStreamToken } from "#agent-stream-token";
 import type { Context } from "#context";
 import { env } from "#env";
 import { canonicalizeScope } from "#scope";
+import { attempt } from "#services";
+import type { AgentInput, AgentRun, AgentStartOptions } from "#services";
+import { createPlatformFixture } from "#test/platform";
+import { testServices } from "#test/services";
 
 const requireValue = <T>(value: T | null | undefined): T => {
   if (value === null || value === undefined) {
@@ -24,67 +34,25 @@ const requireValue = <T>(value: T | null | undefined): T => {
   return value;
 };
 
-const mocks = vi.hoisted(() => ({
+const mocks = {
   app: vi.fn(),
   getRun: vi.fn<(runId: string) => ReturnType<typeof run>>(),
-  start: vi.fn<
-    (
-      workflow: typeof appAgent,
-      args: [Parameters<typeof appAgent>[0]],
-      options?: { attributes?: Record<string, string> }
-    ) => Promise<{
-      runId: string;
-      cancel?: () => void | Promise<void>;
-      getReadable: (...args: never[]) => ReadableStream;
-      returnValue: Promise<unknown>;
-    }>
-  >(),
+  start:
+    vi.fn<
+      (input: AgentInput, options?: AgentStartOptions) => Promise<AgentRun>
+    >(),
   thread: vi.fn<(appId: string, threadId?: string) => Promise<string>>(),
   token: vi.fn(),
-}));
-
-vi.mock("@patchsmith/db", () => ({
-  db: {
-    query: {
-      app: { findFirst: mocks.app },
-      cliToken: { findFirst: mocks.token },
-    },
-  },
-}));
-
-vi.mock("@patchsmith/api-utils/dev-delay", () => ({
-  devDelayMiddleware: async <TResult>({ next }: { next: () => TResult }) =>
-    await next(),
-}));
-
-vi.mock("@patchsmith/api-utils/rate-limiting", () => ({
-  createRateLimiter: vi.fn(),
-  ratelimitMiddleware:
-    () =>
-    async <TResult>({ next }: { next: () => TResult }) =>
-      await next(),
-}));
-
-vi.mock("@patchsmith/agent-fx/workflows", () => ({ appAgent: vi.fn() }));
-
-vi.mock("@patchsmith/agent/threads", async (importOriginal) => ({
-  ...(await importOriginal<typeof threadsModule>()),
-  resolveAppAgentThread: mocks.thread,
-}));
-
-vi.mock("workflow/api", () => ({ getRun: mocks.getRun, start: mocks.start }));
+};
 
 const { appAgentRouter } = await import("./app-agent");
-// SAFETY: This test supplies the context members read by the handler; unrelated request context services are outside this scenario.
+let context: Context;
+let fixture: Awaited<ReturnType<typeof createPlatformFixture>>;
 
-const context =
-  /* oxlint-disable typescript/no-unsafe-type-assertion -- This test supplies the context members read by the handler; unrelated request context services are outside this scenario. */
-  {
-    organization: { id: "org" },
-    project: { id: "project" },
-  } as Context;
+afterEach(async () => {
+  await fixture.client.close();
+});
 
-/* oxlint-enable typescript/no-unsafe-type-assertion */
 const scope = canonicalizeScope({ name: "org", value: { tenant: "one" } });
 
 const input = {
@@ -104,6 +72,7 @@ const input = {
 };
 
 const run = (parts: unknown[]) => ({
+  cancel: vi.fn(),
   getReadable: () =>
     new ReadableStream({
       start(controller) {
@@ -119,10 +88,8 @@ const run = (parts: unknown[]) => ({
   runId: "wrun_test",
 });
 
-const defaultConsumeOptions = { context };
-
-const consume = async (options = defaultConsumeOptions) => {
-  const chunks = await call(appAgentRouter.chat, input, options);
+const consume = async (options?: { context: Context }) => {
+  const chunks = await call(appAgentRouter.chat, input, options ?? { context });
   const events = [];
 
   for await (const event of chunks) {
@@ -132,7 +99,33 @@ const consume = async (options = defaultConsumeOptions) => {
   return events;
 };
 
-beforeEach(() => {
+beforeEach(async () => {
+  fixture = await createPlatformFixture();
+  vi.spyOn(fixture.db.query.app, "findFirst").mockImplementation(mocks.app);
+  vi.spyOn(fixture.db.query.cliToken, "findFirst").mockImplementation(
+    mocks.token
+  );
+  context = {
+    ...testServices({
+      agent: {
+        getRun: (runId) => Effect.sync(() => mocks.getRun(runId)),
+        resolveThread: (appId, threadId) =>
+          attempt(async () => await mocks.thread(appId, threadId)),
+        start: (agentInput, options) =>
+          attempt(async () => await mocks.start(agentInput, options)),
+      },
+      database: fixture.db,
+    }),
+    organization: fixture.organization,
+    project: { ...fixture.project, id: "project" },
+    storage: {
+      createDownloadUrl: vi.fn(),
+      createUploadUrl: vi.fn(),
+      delete: vi.fn(),
+      head: vi.fn(),
+      type: "s3",
+    },
+  };
   vi.clearAllMocks();
   mocks.thread.mockImplementation(
     async (_appId, id) =>
@@ -275,7 +268,7 @@ describe("platform app chat", () => {
       transient: true,
       type: "data-run-complete",
     });
-    const [, [first]] = requireValue(mocks.start.mock.lastCall);
+    const [first] = requireValue(mocks.start.mock.lastCall);
     expect(first.model).toBe("openai/gpt-6.1-sol");
     expect(first).not.toHaveProperty("deployToken");
     expect(
@@ -329,7 +322,7 @@ describe("platform app chat", () => {
       /* consume */
     }
 
-    const [, [agentInput]] = requireValue(mocks.start.mock.lastCall);
+    const [agentInput] = requireValue(mocks.start.mock.lastCall);
     expect(agentInput).toMatchObject({
       appId: first.appId,
     });
@@ -351,7 +344,7 @@ describe("platform app chat", () => {
       transient: true,
       type: "data-run",
     });
-    expect(requireValue(mocks.start.mock.lastCall)[1][0].threadId).toBe(id);
+    expect(requireValue(mocks.start.mock.lastCall)[0].threadId).toBe(id);
   });
 
   it("passes an explicit thread ID to the resolver and workflow", async () => {
@@ -368,9 +361,7 @@ describe("platform app chat", () => {
     }
 
     expect(mocks.thread).toHaveBeenCalledWith("app-one", threadId);
-    expect(requireValue(mocks.start.mock.lastCall)[1][0].threadId).toBe(
-      threadId
-    );
+    expect(requireValue(mocks.start.mock.lastCall)[0].threadId).toBe(threadId);
   });
 
   it("rejects an unavailable thread before starting a workflow", async () => {
@@ -418,7 +409,7 @@ describe("platform app chat", () => {
       /* consume */
     }
 
-    expect(requireValue(mocks.start.mock.lastCall)[1][0]).toMatchObject({
+    expect(requireValue(mocks.start.mock.lastCall)[0]).toMatchObject({
       hostUrl: input.body.hostUrl,
       schema,
     });
@@ -496,7 +487,7 @@ describe("platform app chat", () => {
 
   it("uses the authorized app's canonical ID across tokens and aliases", async () => {
     await consume();
-    expect(requireValue(mocks.start.mock.lastCall)[1][0].appId).toBe("app-one");
+    expect(requireValue(mocks.start.mock.lastCall)[0].appId).toBe("app-one");
     mocks.token.mockResolvedValueOnce({
       expiresAt: new Date(Date.now() + 1000),
       id: "cli-two",
@@ -504,7 +495,7 @@ describe("platform app chat", () => {
       scopeKey: scope.scopeKey,
     });
     await consume();
-    expect(requireValue(mocks.start.mock.lastCall)[1][0].appId).toBe("app-one");
+    expect(requireValue(mocks.start.mock.lastCall)[0].appId).toBe("app-one");
   });
 
   it("rejects apps outside the authenticated project and scope", async () => {
@@ -570,6 +561,8 @@ describe("platform app chat", () => {
       }
 
       await pendingPromise;
+
+      return { finishReason: "stop" };
     })();
 
     mocks.start.mockResolvedValueOnce({
@@ -764,7 +757,7 @@ it("accepts another app in the JWT scope without extending the original deadline
     /* consume */
   }
 
-  expect(requireValue(mocks.start.mock.lastCall)[1][0]).toMatchObject({
+  expect(requireValue(mocks.start.mock.lastCall)[0]).toMatchObject({
     agentToken: jwt,
     appId: "app-two",
   });
@@ -784,7 +777,7 @@ it("forwards host guidance separately from user messages", async () => {
     /* consume */
   }
 
-  const [, [workflowInput]] = requireValue(mocks.start.mock.lastCall);
+  const [workflowInput] = requireValue(mocks.start.mock.lastCall);
   expect(workflowInput.instructions).toBe("Use the host design system.");
   expect(workflowInput.messages).toEqual([
     { content: [{ text: "Build", type: "text" }], role: "user" },

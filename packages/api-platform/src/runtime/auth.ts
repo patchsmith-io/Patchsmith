@@ -4,19 +4,21 @@ import type { AppTokenIdentity } from "@patchsmith/api-utils/app-auth";
 import {
   APP_AUDIENCE,
   appRuntimeIssuer,
-  issueAppToken,
+  issueAppTokenEffect,
   parseAppPublicKeys,
 } from "@patchsmith/api-utils/app-auth";
+import { Effect } from "effect";
 import { z } from "zod";
 
 import { env } from "#env";
+import { PlatformConfig, platformError, runPlatform } from "#services";
 
-const signingKey = () => {
+const signingKey = (config: typeof env) => {
   if (
     !(
-      env.APP_RUNTIME_SIGNING_KEY !== undefined &&
-      env.APP_RUNTIME_SIGNING_KEY !== null &&
-      env.APP_RUNTIME_SIGNING_KEY !== ""
+      config.APP_RUNTIME_SIGNING_KEY !== undefined &&
+      config.APP_RUNTIME_SIGNING_KEY !== null &&
+      config.APP_RUNTIME_SIGNING_KEY !== ""
     )
   ) {
     throw new Error(
@@ -34,7 +36,7 @@ const signingKey = () => {
       y: z.string().min(1),
     })
     .loose()
-    .safeParse(JSON.parse(env.APP_RUNTIME_SIGNING_KEY));
+    .safeParse(JSON.parse(config.APP_RUNTIME_SIGNING_KEY));
 
   if (!parsed.success) {
     throw new Error("Configure an ES256 private JWK with a kid");
@@ -45,8 +47,8 @@ const signingKey = () => {
   return key;
 };
 
-export const appRuntimePublicKeys = () => {
-  const key = signingKey();
+const publicKeys = (config: typeof env) => {
+  const key = signingKey(config);
 
   const publicKey = createPublicKey(
     createPrivateKey({ format: "jwk", key })
@@ -59,7 +61,7 @@ export const appRuntimePublicKeys = () => {
 
   try {
     previous = parseAppPublicKeys(
-      JSON.parse(env.APP_RUNTIME_PREVIOUS_PUBLIC_KEYS ?? '{"keys":[]}')
+      JSON.parse(config.APP_RUNTIME_PREVIOUS_PUBLIC_KEYS ?? '{"keys":[]}')
     );
   } catch {
     throw new Error("Previous signing keys must be public ES256 keys");
@@ -73,18 +75,42 @@ export const appRuntimePublicKeys = () => {
   };
 };
 
-export const issueAppRuntimeToken = async (identity: AppTokenIdentity) => {
-  const key = signingKey();
+export const appRuntimePublicKeysEffect = Effect.gen(
+  function* appRuntimePublicKeys() {
+    const config = yield* PlatformConfig;
 
-  return await issueAppToken(
-    {
-      audience: APP_AUDIENCE,
-      issuer: appRuntimeIssuer(
-        env.OPENAPI_SERVER_URL ?? "https://patchsmith.io/api/platform"
-      ),
-      keyId: key.kid,
-      privateKey: key,
-    },
-    identity
-  );
-};
+    return yield* Effect.try({
+      catch: platformError,
+      try: () => publicKeys(config),
+    });
+  }
+);
+
+// Synchronous adapter for the public keys HTTP endpoint.
+export const appRuntimePublicKeys = (config = env) => publicKeys(config);
+
+export const issueAppRuntimeTokenEffect = (identity: AppTokenIdentity) =>
+  Effect.gen(function* issueAppRuntimeToken() {
+    const config = yield* PlatformConfig;
+
+    const key = yield* Effect.try({
+      catch: platformError,
+      try: () => signingKey(config),
+    });
+
+    const issuer = yield* Effect.try({
+      catch: platformError,
+      try: () =>
+        appRuntimeIssuer(
+          config.OPENAPI_SERVER_URL ?? "https://patchsmith.io/api/platform"
+        ),
+    });
+
+    return yield* issueAppTokenEffect(
+      { audience: APP_AUDIENCE, issuer, keyId: key.kid, privateKey: key },
+      identity
+    ).pipe(Effect.mapError(platformError));
+  });
+
+export const issueAppRuntimeToken = async (identity: AppTokenIdentity) =>
+  await runPlatform(issueAppRuntimeTokenEffect(identity));

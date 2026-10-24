@@ -1,12 +1,25 @@
-import { app, appDeployment } from "@patchsmith/db/schema/apps";
+import {
+  app,
+  appDeployment,
+  appDeploymentFile,
+} from "@patchsmith/db/schema/apps";
 import { organization } from "@patchsmith/db/schema/auth";
 import { project } from "@patchsmith/db/schema/project";
 import { eq } from "drizzle-orm";
-import { expect, it } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
+import { z } from "zod";
 
+import { env } from "#env";
+import { runPlatform } from "#services";
 import { createTestDb } from "#test/pglite";
+import { createPlatformFixture } from "#test/platform";
+import { testServices } from "#test/services";
 
-import { selectRuntimeDeployment } from "./deployment-steps";
+import {
+  listRuntimeInstallationsEffect,
+  selectRuntimeDeployment,
+  warmRuntimeDeploymentEffect,
+} from "./deployment-steps";
 
 it("rolls out every installation of the source and rejects delayed older rollouts", async () => {
   const { client, db } = await createTestDb();
@@ -122,5 +135,165 @@ it("rolls out every installation of the source and rejects delayed older rollout
     ).toHaveLength(3);
   } finally {
     await client.close();
+  }
+});
+
+it("paginates only installations still selecting the rollout's deployment", async () => {
+  const fixture = await createPlatformFixture();
+
+  try {
+    const [deployment] = await fixture.db
+      .insert(appDeployment)
+      .values({ appId: fixture.app.id, status: "published" })
+      .returning();
+
+    if (!deployment) {
+      throw new Error("Missing deployment");
+    }
+
+    await fixture.db.insert(app).values(
+      Array.from({ length: 51 }, (_, index) => ({
+        currentDeploymentId: deployment.id,
+        name: `Installation ${index}`,
+        projectId: fixture.project.id,
+        ...fixture.scope,
+      }))
+    );
+    const services = testServices({ database: fixture.db });
+
+    const input = {
+      appId: fixture.app.id,
+      deploymentId: deployment.id,
+      projectId: fixture.project.id,
+    };
+
+    const first = await runPlatform(
+      listRuntimeInstallationsEffect(input),
+      services
+    );
+
+    const next = await runPlatform(
+      listRuntimeInstallationsEffect(input, first.at(-1)),
+      services
+    );
+
+    expect(first).toHaveLength(50);
+    expect(next).toHaveLength(1);
+    expect(new Set([...first, ...next]).size).toBe(51);
+
+    const foreign = await runPlatform(
+      listRuntimeInstallationsEffect({
+        ...input,
+        projectId: crypto.randomUUID(),
+      }),
+      services
+    );
+
+    expect(foreign).toEqual([]);
+  } finally {
+    await fixture.client.close();
+  }
+});
+
+it("warms the installation's fresh selection using the owning app's verified server", async () => {
+  const fixture = await createPlatformFixture();
+
+  try {
+    const [old, current] = await fixture.db
+      .insert(appDeployment)
+      .values([
+        { appId: fixture.app.id, status: "published" },
+        { appId: fixture.app.id, status: "published" },
+      ])
+      .returning();
+
+    if (!old || !current) {
+      throw new Error("Missing deployments");
+    }
+
+    const [installation] = await fixture.db
+      .insert(app)
+      .values({
+        currentDeploymentId: old.id,
+        name: "Installed",
+        projectId: fixture.project.id,
+        ...fixture.scope,
+      })
+      .returning();
+
+    if (!installation) {
+      throw new Error("Missing installation");
+    }
+
+    const objectKey = `projects/${fixture.project.shortId}/apps/${fixture.app.shortId}/deployments/${current.shortId}/server/server.js`;
+
+    const [file] = await fixture.db
+      .insert(appDeploymentFile)
+      .values({
+        appDeploymentId: current.id,
+        checksum: "a".repeat(64),
+        contentLength: 123,
+        contentType: "application/javascript",
+        encoding: "gzip",
+        objectKey,
+        status: "verified",
+      })
+      .returning();
+
+    if (!file) {
+      throw new Error("Missing server file");
+    }
+
+    await fixture.db
+      .update(app)
+      .set({ currentDeploymentId: current.id })
+      .where(eq(app.id, installation.id));
+
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response(null, { status: 204 }));
+
+    const services = testServices({
+      config: {
+        ...env,
+        APP_RUNTIME_INTERNAL_URL: "https://internal.test",
+        APP_RUNTIME_SERVICE_TOKEN: "x".repeat(32),
+      },
+      database: fixture.db,
+      fetch: fetcher,
+    });
+
+    await runPlatform(
+      warmRuntimeDeploymentEffect(fixture.project.id, installation.id),
+      services
+    );
+    const sent = z.string().parse(fetcher.mock.lastCall?.[1]?.body);
+    expect(JSON.parse(sent)).toMatchObject({
+      appId: installation.id,
+      contentEncoding: "gzip",
+      deploymentId: current.id,
+      objectKey,
+    });
+    expect(fetcher.mock.lastCall?.[0]).toEqual(
+      new URL(
+        `https://internal.test/p/${fixture.project.id}/a/${installation.shortId}/new-deployment`
+      )
+    );
+    fetcher.mockClear();
+    await fixture.db
+      .update(appDeploymentFile)
+      .set({ status: "uploading" })
+      .where(eq(appDeploymentFile.id, file.id));
+    await runPlatform(
+      warmRuntimeDeploymentEffect(fixture.project.id, installation.id),
+      services
+    );
+    await runPlatform(
+      warmRuntimeDeploymentEffect(crypto.randomUUID(), installation.id),
+      services
+    );
+    expect(fetcher).not.toHaveBeenCalled();
+  } finally {
+    await fixture.client.close();
   }
 });

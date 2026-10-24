@@ -17,6 +17,7 @@ import { organization, user } from "@patchsmith/db/schema/auth";
 import { cliToken } from "@patchsmith/db/schema/cli-auth";
 import { project as projectTable } from "@patchsmith/db/schema/project";
 import { eq } from "drizzle-orm";
+import { Effect } from "effect";
 import {
   afterEach,
   beforeEach,
@@ -28,23 +29,26 @@ import {
 import { z } from "zod";
 
 import type { Context } from "#context";
+import { env } from "#env";
 import { forEachSequential } from "#for-each-sequential";
+import { attempt } from "#services";
 import { createTestDb } from "#test/pglite";
+import { testServices } from "#test/services";
 
 import { appAgentRouter } from "./app-agent";
-import type * as RuntimeModule from "./runtime";
 
-// SAFETY: The fixture controls this value; this assertion bridges the minimal test double to the API whose behavior is asserted below.
-const testState = vi.hoisted(() => ({
-  db: undefined as unknown,
-  env: {
-    APP_RUNTIME_URL: undefined as string | undefined,
-    AUTH_SECRET: "test-only-agent-creation-secret-32-chars",
-  },
+const settings: typeof env & { AUTH_SECRET: string } = {
+  ...env,
+  APP_RUNTIME_URL: undefined,
+  AUTH_SECRET: "test-only-agent-creation-secret-32-chars",
+};
+
+const testState = {
+  env: settings,
   issueToken:
     vi.fn<
       (identity: {
-        userId: string;
+        subjectId: string;
         installationId: string;
         projectId: string;
         appId: string;
@@ -52,27 +56,7 @@ const testState = vi.hoisted(() => ({
       }) => Promise<{ expiresAt: number; token: string }>
     >(),
   publishMetadata: vi.fn(),
-}));
-
-vi.mock("../env", () => ({ env: testState.env }));
-
-vi.mock("@patchsmith/kv", () => ({ getKV: () => {} }));
-
-vi.mock("@patchsmith/db", () => ({
-  createDb: () => testState.db,
-  get db() {
-    return testState.db;
-  },
-}));
-
-vi.mock("../runtime/auth", () => ({
-  issueAppRuntimeToken: testState.issueToken,
-}));
-
-vi.mock("./runtime", async (importOriginal) => ({
-  ...(await importOriginal<typeof RuntimeModule>()),
-  publishRuntimeMetadata: testState.publishMetadata,
-}));
+};
 
 const { appRouter } = await import("./apps");
 const { canonicalizeScope } = await import("#scope");
@@ -89,7 +73,11 @@ const productionScope = {
 
 const stagingScope = { name: "environment", value: { environment: "staging" } };
 
+const http = vi.fn<typeof fetch>();
+let services: ReturnType<typeof testServices>;
+
 const createContext = (overrides: Partial<Context> = {}): Context => ({
+  ...services,
   organization: {
     createdAt: new Date("2026-01-01T00:00:00.000Z"),
     id: orgId,
@@ -126,6 +114,7 @@ describe("platform appRouter", () => {
   let db: Awaited<ReturnType<typeof createTestDb>>["db"];
 
   beforeEach(async () => {
+    http.mockReset();
     testState.issueToken.mockImplementation(
       asyncFixture(() => ({
         expiresAt: Date.now() + 300_000,
@@ -136,7 +125,20 @@ describe("platform appRouter", () => {
     const testDb = await createTestDb();
     ({ client } = testDb);
     ({ db } = testDb);
-    testState.db = db;
+    services = testServices({
+      config: testState.env,
+      database: db,
+      fetch: http,
+      runtime: {
+        enqueueWarmup: (metadata) =>
+          attempt(async () => {
+            await testState.publishMetadata(metadata);
+          }),
+        issueToken: (identity) =>
+          attempt(async () => await testState.issueToken(identity)),
+        warmDeployment: () => Effect.void,
+      },
+    });
 
     await db.insert(user).values({
       createdAt: new Date("2026-01-01T00:00:00.000Z"),
@@ -234,25 +236,23 @@ describe("platform appRouter", () => {
     ]);
     const requests: Request[] = [];
 
-    const runtimeFetch = vi
-      .spyOn(globalThis, "fetch")
-      .mockImplementation(async (value, init) => {
-        const request =
-          value instanceof Request ? value : new Request(value, init);
+    const runtimeFetch = http.mockImplementation(async (value, init) => {
+      const request =
+        value instanceof Request ? value : new Request(value, init);
 
-        requests.push(request);
-        await request.clone().json();
+      requests.push(request);
+      await request.clone().json();
 
-        return Response.json(
-          { json: [{ data: {}, key: "page", metadata: { label: "Page" } }] },
-          {
-            headers: {
-              "server-timing":
-                "runtime_execute;dur=3.0, private;desc=platform-token",
-            },
-          }
-        );
-      });
+      return Response.json(
+        { json: [{ data: {}, key: "page", metadata: { label: "Page" } }] },
+        {
+          headers: {
+            "server-timing":
+              "runtime_execute;dur=3.0, private;desc=platform-token",
+          },
+        }
+      );
+    });
 
     const findMany = vi.spyOn(db.query.app, "findMany");
     const findFirst = vi.spyOn(db.query.app, "findFirst");
@@ -470,15 +470,13 @@ describe("platform appRouter", () => {
 
     const requests: Request[] = [];
 
-    const runtimeFetch = vi
-      .spyOn(globalThis, "fetch")
-      .mockImplementation(async (value, init) => {
-        requests.push(
-          value instanceof Request ? value : new Request(value, init)
-        );
+    const runtimeFetch = http.mockImplementation(async (value, init) => {
+      requests.push(
+        value instanceof Request ? value : new Request(value, init)
+      );
 
-        return await Promise.withResolvers<Response>().promise;
-      });
+      return await Promise.withResolvers<Response>().promise;
+    });
 
     try {
       const handler = new OpenAPIHandler({ apps: appRouter });
@@ -516,22 +514,20 @@ describe("platform appRouter", () => {
     const stalled = await seedRuntimeApp("stalledwarn", views);
     const requests: Request[] = [];
 
-    const runtimeFetch = vi
-      .spyOn(globalThis, "fetch")
-      .mockImplementation(async (value, init) => {
-        const request =
-          value instanceof Request ? value : new Request(value, init);
+    const runtimeFetch = http.mockImplementation(async (value, init) => {
+      const request =
+        value instanceof Request ? value : new Request(value, init);
 
-        requests.push(request);
+      requests.push(request);
 
-        if (request.url.includes(`/a/${completed.app.shortId}/`)) {
-          return Response.json({
-            json: [{ data: {}, key: "ready", metadata: {} }],
-          });
-        }
+      if (request.url.includes(`/a/${completed.app.shortId}/`)) {
+        return Response.json({
+          json: [{ data: {}, key: "ready", metadata: {} }],
+        });
+      }
 
-        return await Promise.withResolvers<Response>().promise;
-      });
+      return await Promise.withResolvers<Response>().promise;
+    });
 
     try {
       const handler = new OpenAPIHandler({ apps: appRouter });
@@ -592,9 +588,7 @@ describe("platform appRouter", () => {
       }))
     );
 
-    const runtimeFetch = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(Response.json({ json: [] }));
+    const runtimeFetch = http.mockResolvedValue(Response.json({ json: [] }));
 
     const findMany = vi.spyOn(db.query.app, "findMany");
 
@@ -666,7 +660,7 @@ describe("platform appRouter", () => {
       .mockResolvedValueOnce(installations.slice(0, 101))
       .mockResolvedValueOnce(installations.slice(99));
 
-    const runtimeFetch = vi.spyOn(globalThis, "fetch").mockImplementation(
+    const runtimeFetch = http.mockImplementation(
       asyncFixture(() =>
         Response.json({
           json: [{ data: {}, key: "page", metadata: {} }],
@@ -1050,8 +1044,11 @@ describe("platform appRouter", () => {
       );
 
       await expect(deletion).rejects.toMatchObject({
-        cause: { code, message: "Deletion failed" },
-        name: "DrizzleQueryError",
+        _tag: "PlatformDependencyError",
+        cause: {
+          cause: { code, message: "Deletion failed" },
+          name: "DrizzleQueryError",
+        },
       });
     }
   );
@@ -1574,8 +1571,7 @@ describe("platform appRouter", () => {
 
       if (status === "published") {
         expect(testState.publishMetadata).toHaveBeenCalledWith(
-          expect.objectContaining({ deploymentId: deployment.id, objectKey }),
-          created.shortId
+          expect.objectContaining({ deploymentId: deployment.id, objectKey })
         );
       } else {
         expect(testState.publishMetadata).not.toHaveBeenCalled();
@@ -1837,7 +1833,7 @@ describe("platform appRouter", () => {
     expect(testState.issueToken).toHaveBeenCalledTimes(1);
     const handler = new OpenAPIHandler({ apps: appRouter });
 
-    const http = await handler.handle(
+    const httpResult = await handler.handle(
       new Request("https://platform.test/api/platform/apps/runtime/session", {
         body: JSON.stringify({
           app: { shortId: created.shortId },
@@ -1851,8 +1847,8 @@ describe("platform appRouter", () => {
       { context, prefix: "/api/platform" }
     );
 
-    expect(http.response?.status).toBe(200);
-    await expect(http.response?.json()).resolves.toMatchObject({
+    expect(httpResult.response?.status).toBe(200);
+    await expect(httpResult.response?.json()).resolves.toMatchObject({
       identity: {
         appShortId: created.shortId,
         projectShortId: context.project.shortId,

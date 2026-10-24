@@ -1,16 +1,17 @@
 import { APP_AUDIENCE, appTokenVerifier } from "@patchsmith/api-utils/app-auth";
-import { expect, it, vi } from "vite-plus/test";
+import { expect, it } from "vite-plus/test";
 
-import { appRuntimePublicKeys, issueAppRuntimeToken } from "./auth";
+import { env } from "#env";
+import { runPlatform } from "#services";
+import { testServices } from "#test/services";
 
-// SAFETY: The fixture controls this value; this assertion bridges the minimal test double to the API whose behavior is asserted below.
-const settings = vi.hoisted(() => ({
-  APP_RUNTIME_PREVIOUS_PUBLIC_KEYS: undefined as string | undefined,
+import { appRuntimePublicKeys, issueAppRuntimeTokenEffect } from "./auth";
+
+const settings = {
+  ...env,
   APP_RUNTIME_SIGNING_KEY: "",
   OPENAPI_SERVER_URL: "https://platform.test/api/platform",
-}));
-
-vi.mock("../env", () => ({ env: settings }));
+};
 
 const pair = await crypto.subtle.generateKey(
   { name: "ECDSA", namedCurve: "P-256" },
@@ -24,7 +25,7 @@ settings.APP_RUNTIME_SIGNING_KEY = JSON.stringify({
 });
 
 it("publishes only public keys and issues platform-bound short-lived access", async () => {
-  const publicKeys = appRuntimePublicKeys();
+  const publicKeys = appRuntimePublicKeys(settings);
   expect(publicKeys.keys[0]).not.toHaveProperty("d");
 
   const identity = {
@@ -40,7 +41,12 @@ it("publishes only public keys and issues platform-bound short-lived access", as
   };
 
   const issuedAfter = Math.floor(Date.now() / 1000);
-  const session = await issueAppRuntimeToken(identity);
+
+  const session = await runPlatform(
+    issueAppRuntimeTokenEffect(identity),
+    testServices({ config: settings })
+  );
+
   const issuedBefore = Math.floor(Date.now() / 1000);
 
   const verify = appTokenVerifier({
@@ -58,6 +64,6 @@ it("refuses to expose private material in retired keys", () => {
   settings.APP_RUNTIME_PREVIOUS_PUBLIC_KEYS = JSON.stringify({
     keys: [JSON.parse(settings.APP_RUNTIME_SIGNING_KEY)],
   });
-  expect(() => appRuntimePublicKeys()).toThrow("public ES256");
+  expect(() => appRuntimePublicKeys(settings)).toThrow("public ES256");
   settings.APP_RUNTIME_PREVIOUS_PUBLIC_KEYS = undefined;
 });
