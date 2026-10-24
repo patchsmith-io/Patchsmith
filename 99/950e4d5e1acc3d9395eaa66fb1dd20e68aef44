@@ -1,0 +1,65 @@
+apps/web/src/server/api/platform.ts
+  s_2fbdcfa57a9b25::t_8711302b15b526 55
+apps/web/workflows/app-deployment.ts
+  s_2fbdcfa57a9b25::t_96bc5fd78e01cb 2
+packages/api-platform/README.md
+  s_2fbdcfa57a9b25::t_dba66a59a051b9 5-15
+packages/api-platform/package.json
+  s_2fbdcfa57a9b25::t_5eaa1d04f13106 31-40,48
+packages/api-platform/src/app-discovery.ts
+  s_2fbdcfa57a9b25::t_43308773a56bad 1-71
+packages/api-platform/src/context.ts
+  s_2fbdcfa57a9b25::t_75fd896f7fbbbd 14
+packages/api-platform/src/deployments/verification.ts
+  s_2fbdcfa57a9b25::t_e653894a031003 1-349
+packages/api-platform/src/index.ts
+  s_2fbdcfa57a9b25::t_76b47633b6bf23 42
+packages/api-platform/src/routes/agent-deployment.test.ts
+  s_2fbdcfa57a9b25::t_301ba232a5e6c8 432
+packages/api-platform/src/routes/app-agent.ts
+  s_2fbdcfa57a9b25::t_bc32ded0ca52e2 25,33
+packages/api-platform/src/routes/app-runtime-resolution.test.ts
+  s_2fbdcfa57a9b25::t_14cc21302c88db 1-508
+packages/api-platform/src/routes/app-runtime-session.test.ts
+  s_2fbdcfa57a9b25::t_1a6e8fc37533dd 1-261
+packages/api-platform/src/routes/app-runtime.test.ts
+  s_2fbdcfa57a9b25::t_68a15c0dc532d8 15-16,23
+packages/api-platform/src/routes/app-runtime.ts
+  s_2fbdcfa57a9b25::t_b3f037177b8726 10,13-20,22,30,349-510
+packages/api-platform/src/routes/apps-agent.test.ts
+  s_2fbdcfa57a9b25::t_15ef2fb0edb9e9 1-174
+packages/api-platform/src/routes/apps-crud.test.ts
+  s_2fbdcfa57a9b25::t_45090cc95d08b3 11,15-22,24,26-27,29-31,39-47,49-53,55-56,58-60,62-65,67-71,73-76,78-81,102,134,156,170,183,200,205,229,272,298,326,371,505,618
+packages/api-platform/src/routes/apps-install.test.ts
+  s_2fbdcfa57a9b25::t_e8634a384d7bc8 1-532
+packages/api-platform/src/routes/apps.ts
+  s_2fbdcfa57a9b25::t_7f722c1aa7459c 1,4,6,9,21,33-34,495,569-570
+packages/api-platform/src/routes/deployments-upload.test.ts
+  s_2fbdcfa57a9b25::t_b2666bc711521f 1-398
+packages/api-platform/src/routes/deployments-verification.test.ts
+  s_2fbdcfa57a9b25::t_8ff6fec85395fa 12,15-36,46,101,162,190,365,378,380,392,397,414,439,442,496,500,504,528,533,569,659,667,679,681
+packages/api-platform/src/routes/deployments.ts
+  s_2fbdcfa57a9b25::t_c07016462f16e6 19,23-27,37,39,635-637,672
+packages/api-platform/src/services.ts
+  s_2fbdcfa57a9b25::t_cd8b52daba0615 187,202,212
+packages/api-platform/src/test/apps.ts
+  s_2fbdcfa57a9b25::t_5e7b00ebdffc3f 1-209
+packages/api-platform/src/test/deployments.ts
+  s_2fbdcfa57a9b25::t_0c58191e6005d9 1-225
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "99950e4d5e1acc3d9395eaa66fb1dd20e68aef44",
+  "prompts": {},
+  "sessions": {
+    "s_2fbdcfa57a9b25": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a16dab-0fd7-7612-9b38-049525ff9cae",
+        "model": "unknown"
+      },
+      "human_author": "Alfie Jones <alfie.jones@hotmail.co.uk>"
+    }
+  }
+}
