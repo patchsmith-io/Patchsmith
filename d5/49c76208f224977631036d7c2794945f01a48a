@@ -1,0 +1,23 @@
+packages/cli/src/deploy.ts
+  s_6a583517334d16::t_93f9bc713a2696 637-638,640-642,644-646,648-650
+packages/cli/src/deploy.test.ts
+  s_6a583517334d16::t_384681171cea57 335,341,359-361,364
+  s_6a583517334d16::t_a2329aefb07442 352,365,381,383
+  s_6a583517334d16::t_f85617569c4ace 299-334,336-340,342-351,353-358,362-363,366-380,382
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d549c76208f224977631036d7c2794945f01a48a",
+  "prompts": {},
+  "sessions": {
+    "s_6a583517334d16": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a16d19-88bf-70f0-a3b5-0659a69ae88d",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Alfie Jones <alfie.jones@hotmail.co.uk>"
+    }
+  }
+}

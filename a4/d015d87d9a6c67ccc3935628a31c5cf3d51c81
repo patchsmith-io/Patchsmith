@@ -1,0 +1,14 @@
+packages/cli/src/deploy.ts
+  h_18044dd1b61a81 430-443,445-446
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a4d015d87d9a6c67ccc3935628a31c5cf3d51c81",
+  "prompts": {},
+  "humans": {
+    "h_18044dd1b61a81": {
+      "author": "Alfie Jones <alfie.jones@hotmail.co.uk>"
+    }
+  }
+}

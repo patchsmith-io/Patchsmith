@@ -1,0 +1,67 @@
+.changeset/hashed-app-assets.md
+  s_6a583517334d16::t_70d32cf5595c4e 3,11-13
+docs/writing-apps/overview.mdx
+  s_6a583517334d16::t_47783d0525891a 92,94-105
+packages/agent/src/tools/publish.test.ts
+  s_6a583517334d16::t_5b45b80f2b3343 17-22,26,28,37,239-242,246,282,287,405,425-426,432
+packages/agent/src/tools/publish.ts
+  s_6a583517334d16::t_d6502d423d7a30 128,157-160,197
+packages/api-platform/openapi.json
+  s_6a583517334d16::t_be08d88355d917 4650,4653
+packages/api-platform/src/asset-url.test.ts
+  s_6a583517334d16::t_aec2595ea4bf18 35-36,50-51,61,70
+packages/api-platform/src/routes/apps.test.ts
+  s_6a583517334d16::t_8345d046858c92 782,886
+packages/api-platform/src/routes/deployments.test.ts
+  s_6a583517334d16::t_2cec5c71a25f8c 92-101,157,171,173-192,270,274,277-280,450-455,480,484,487,521,538-543,562,570,580-585,589,707-712,1421-1469,1520,1526-1530,1532,1534,1541-1545,1547,1611-1614,1617,1619,1625,1628,1714,1721-1722,1753
+packages/api-platform/src/routes/deployments.ts
+  s_6a583517334d16::t_04ea45f4c62d09 6,8,70-76,84,97,398,400-415,429-442,490-493,495-496,502-503,591-593,597-601,605,607,610,662,726,730,763-766
+packages/api-platform/src/routes/static-assets.ts
+  s_6a583517334d16::t_41bfeb76288519 2-5,160-161,181-225,233
+packages/api-utils/src/app-asset-url.ts
+  s_6a583517334d16::t_bbdb1c58386477 50
+packages/asset-delivery/src/index.test.ts
+  s_6a583517334d16::t_e6cb65e01d0038 106,116-118,128
+packages/asset-delivery/src/index.ts
+  s_6a583517334d16::t_a342c03375b84a 25,86,92,94
+packages/cli/src/build.test.ts
+  s_6a583517334d16::t_48e9c53df1ad3d 24-29,33,88-93,95-100
+packages/cli/src/deploy.test.ts
+  s_6a583517334d16::t_95e943e49c4e4c 283-285,880-888,897-905,910-911,924-927,931,989,991-999,1006-1007,1010,1019-1021
+packages/cli/src/deploy.ts
+  s_6a583517334d16::t_874ddd9cd0c853 62,68,83,94,184,520
+packages/cli/src/generator/generate.test.ts
+  s_6a583517334d16::t_227c29b192d160 189-190,470,491-497
+packages/cli/src/generator/generate.ts
+  s_6a583517334d16::t_13f51158c28348 262-271
+packages/client-platform/src/client/types.gen.ts
+  s_6a583517334d16::t_c9fb332f6cbb4d 1171-1172
+packages/core/src/server/routes/deployments.ts
+  s_6a583517334d16::t_a80a7d321fec5a 48-49
+packages/db/src/schema/apps.ts
+  s_6a583517334d16::t_3aff86c216fd13 173-179,181-185
+packages/vite/src/builder/upload-manifest.test.ts
+  s_6a583517334d16::t_e8861c833a360b 40-83
+packages/vite/src/builder/upload-manifest.ts
+  s_6a583517334d16::t_3c2cf31e0a44e5 4-5,26-68,71-76,78-86,89-110,112,116-119,121-123
+packages/vite/src/config/config.ts
+  s_6a583517334d16::t_d40a4bde2ad265 3-13,39,70,75
+packages/vite/src/index.ts
+  s_6a583517334d16::t_5886d49b63c56d 1,219-220,230,247-257
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3eea4035262b06ab84a174794b5fda937675c3e4",
+  "prompts": {},
+  "sessions": {
+    "s_6a583517334d16": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a16d19-88bf-70f0-a3b5-0659a69ae88d",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Alfie Jones <alfie.jones@hotmail.co.uk>"
+    }
+  }
+}

@@ -1,0 +1,49 @@
+apps/apps-worker/src/assets.ts
+  s_adf6c59eceb8ab::t_223ef7fdd360f7 17-21,31-36,96,105,116-117,126,173
+packages/api-platform/src/assets.ts
+  s_adf6c59eceb8ab::t_634a446c79b2d6 56-59,65
+packages/app/src/client.ts
+  s_adf6c59eceb8ab::t_82456eb2436bf1 31-32
+packages/asset-delivery/package.json
+  s_adf6c59eceb8ab::t_e106b87edda128 18-22,35
+packages/asset-delivery/src/static-assets.ts
+  s_adf6c59eceb8ab::t_dedd1d2392b86d 1-42
+packages/cli/src/assets-build.test.ts
+  s_4aa902054389f1::t_56a65d0b25a419 1-84
+packages/core/src/server/routes/deployments.ts
+  s_adf6c59eceb8ab::t_27cdc2941c4088 118-140,175
+packages/vite/src/builder/client-views.ts
+  s_adf6c59eceb8ab::t_07475de2b45cd2 12
+packages/api-platform/openapi.json
+  s_adf6c59eceb8ab::t_91d2743b78868f 4744-4765,5428-5515,5725-5792,5808-5809
+packages/api-platform/src/routes/deployments.ts
+  s_adf6c59eceb8ab::t_04b22ad7c4b948 12,38-44,102,398-402,411-416,437-445,454-458,598-609,715,879-888
+packages/app/src/client/assets.ts
+  s_adf6c59eceb8ab::t_1ebbf5b2e79950 1-21
+packages/cli/src/deploy.ts
+  s_adf6c59eceb8ab::t_f9f9692b6e7270 64-66,98-104,202-203,215-216,427-442,584-586,616-627,629-637,722-726
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a023f8be6834360bb459998c9cd8be96867ab738",
+  "prompts": {},
+  "sessions": {
+    "s_4aa902054389f1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a16c77-c999-7842-91cd-41cf72d5d917",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Alfie Jones <alfie.jones@hotmail.co.uk>"
+    },
+    "s_adf6c59eceb8ab": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a16c63-f376-7571-9ad7-4fee84c9eb81",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Alfie Jones <alfie.jones@hotmail.co.uk>"
+    }
+  }
+}

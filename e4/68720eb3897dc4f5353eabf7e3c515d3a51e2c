@@ -1,0 +1,18 @@
+packages/db/src/migrations/20261024064016_melodic_sprite/migration.sql
+  h_18044dd1b61a81 19,25-26,29-30
+packages/db/src/migrations/20261024064016_melodic_sprite/snapshot.json
+  h_18044dd1b61a81 4,2150-2162,3218-3245,3274-3301,3956-3957,3960,3963,3969-3970,3973,3976
+packages/db/src/schema/apps.ts
+  h_18044dd1b61a81 5,209,336,350-352,356-365
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e468720eb3897dc4f5353eabf7e3c515d3a51e2c",
+  "prompts": {},
+  "humans": {
+    "h_18044dd1b61a81": {
+      "author": "Alfie Jones <alfie.jones@hotmail.co.uk>"
+    }
+  }
+}

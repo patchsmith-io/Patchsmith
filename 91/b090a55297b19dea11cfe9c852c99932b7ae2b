@@ -1,0 +1,40 @@
+.changeset/hashed-app-assets.md
+  h_18044dd1b61a81 11
+apps/apps-worker/src/assets.test.ts
+  h_18044dd1b61a81 205-208,214
+apps/apps-worker/src/tests/integration.test.mjs
+  h_18044dd1b61a81 1064,1067-1071,1074-1077
+docs/writing-apps/overview.mdx
+  h_18044dd1b61a81 92
+packages/api-platform/openapi.json
+  h_18044dd1b61a81 4713
+packages/api-platform/src/routes/deployments.test.ts
+  h_18044dd1b61a81 54-70
+packages/asset-delivery/src/deployment-limits.ts
+  h_18044dd1b61a81 4-5
+packages/asset-delivery/src/static-assets.ts
+  h_18044dd1b61a81 5
+packages/cli/README.md
+  h_18044dd1b61a81 9
+packages/core/src/server/handler.test.ts
+  h_18044dd1b61a81 1138-1144,1155-1161,1164-1175
+packages/core/src/server/routes/deployments.ts
+  h_18044dd1b61a81 122
+packages/vite/src/builder/static-assets.test.ts
+  h_18044dd1b61a81 17-36
+packages/vite/src/builder/upload-manifest.test.ts
+  h_18044dd1b61a81 9-24
+packages/vite/src/builder/upload-manifest.ts
+  h_18044dd1b61a81 1-4,56
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "91b090a55297b19dea11cfe9c852c99932b7ae2b",
+  "prompts": {},
+  "humans": {
+    "h_18044dd1b61a81": {
+      "author": "Alfie Jones <alfie.jones@hotmail.co.uk>"
+    }
+  }
+}

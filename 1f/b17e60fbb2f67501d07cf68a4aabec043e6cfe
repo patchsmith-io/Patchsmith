@@ -1,0 +1,18 @@
+.changeset/hashed-app-assets.md
+  h_18044dd1b61a81 4-5,7-8
+packages/agent/src/tools/publish.test.ts
+  h_18044dd1b61a81 6,220-315
+packages/agent/src/tools/publish.ts
+  h_18044dd1b61a81 267-268,270-274
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1fb17e60fbb2f67501d07cf68a4aabec043e6cfe",
+  "prompts": {},
+  "humans": {
+    "h_18044dd1b61a81": {
+      "author": "Alfie Jones <alfie.jones@hotmail.co.uk>"
+    }
+  }
+}

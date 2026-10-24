@@ -1,0 +1,16 @@
+packages/api-platform/src/routes/deployments.test.ts
+  h_18044dd1b61a81 392,610-682
+packages/api-platform/src/routes/static-assets.ts
+  h_18044dd1b61a81 136
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "36a2f64b17b3754ea9b22761025fc6510b082f0d",
+  "prompts": {},
+  "humans": {
+    "h_18044dd1b61a81": {
+      "author": "Alfie Jones <alfie.jones@hotmail.co.uk>"
+    }
+  }
+}

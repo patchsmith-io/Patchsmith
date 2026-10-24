@@ -1,0 +1,21 @@
+packages/db/src/migrations/20261024053920_dear_warbound/migration.sql
+  s_adf6c59eceb8ab::t_d4b97e7745d414 1-27
+packages/db/src/migrations/20261024053920_dear_warbound/snapshot.json
+  s_adf6c59eceb8ab::t_0cfa9458258767 1-4256
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1b605656ee0371a55b5a5660dfc47dee141cf234",
+  "prompts": {},
+  "sessions": {
+    "s_adf6c59eceb8ab": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a16c63-f376-7571-9ad7-4fee84c9eb81",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Alfie Jones <alfie.jones@hotmail.co.uk>"
+    }
+  }
+}

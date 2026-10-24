@@ -1,0 +1,36 @@
+packages/agent/src/tools/publish.test.ts
+  h_18044dd1b61a81 30,406,414
+packages/agent/src/tools/publish.ts
+  h_18044dd1b61a81 188,197
+packages/api-platform/src/routes/deployment-effects.test.ts
+  h_18044dd1b61a81 1-56
+packages/api-platform/src/routes/deployment-effects.ts
+  h_18044dd1b61a81 1-65
+packages/api-platform/src/routes/deployments.test.ts
+  h_18044dd1b61a81 17,55-56,219-382,1618-1620,1903-1915,1930
+packages/api-platform/src/routes/deployments.ts
+  h_18044dd1b61a81 1,23,38-41,119,121,125-126,130,145,315-324,357-364,367,369,372-382,386-423,425-533,560-562,564-568,570-576,578,580-583,585-587,589-595,597-603,605-727,729-735,737-743,745-753,755-756,758-768,772-773,776,778-800,803-805
+packages/api-platform/src/routes/static-assets.ts
+  h_18044dd1b61a81 2,5,10,15,17-18,22-26,32,44,71-80,84-97,99-101,104-105,107-112,115-130,133-138,142,144-150,152-160,165-166,168,170-173,176-179,181-184,188-208,210-233,235-248,250-255,258-261,263-268,271-283,287-302,305-306,308
+packages/asset-delivery/src/index.test.ts
+  h_18044dd1b61a81 42,117
+packages/asset-delivery/src/index.ts
+  h_18044dd1b61a81 5,71
+packages/asset-delivery/src/static-assets.ts
+  h_18044dd1b61a81 2
+packages/vite/src/builder/static-assets.ts
+  h_18044dd1b61a81 7,71-72,85-86
+packages/vite/src/index.ts
+  h_18044dd1b61a81 5-9,229-231,258
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "296a3863196670a51019e8369cf4ccf0578f2291",
+  "prompts": {},
+  "humans": {
+    "h_18044dd1b61a81": {
+      "author": "Alfie Jones <alfie.jones@hotmail.co.uk>"
+    }
+  }
+}

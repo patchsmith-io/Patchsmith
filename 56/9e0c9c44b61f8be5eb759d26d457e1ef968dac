@@ -1,0 +1,56 @@
+.changeset/hashed-app-assets.md
+  h_18044dd1b61a81 11
+.changeset/ten-mib-deployment-budget.md
+  h_18044dd1b61a81 1-6
+apps/apps-worker/src/assets.test.ts
+  h_18044dd1b61a81 82,86,440,473
+apps/apps-worker/src/supervisor/source.test.ts
+  h_18044dd1b61a81 4,284-287,306,308,327-330,333
+apps/apps-worker/src/supervisor/source.ts
+  h_18044dd1b61a81 55-59
+docs/writing-apps/overview.mdx
+  h_18044dd1b61a81 92
+packages/agent/src/tools/publish.test.ts
+  h_18044dd1b61a81 2,4-5,46-141,358,381-444
+packages/agent/src/tools/publish.ts
+  h_18044dd1b61a81 5-9,70,75,83,93,95,97,99-100,105,118-120,141-195,263,265,314
+packages/api-platform/openapi.json
+  h_18044dd1b61a81 4721,4757
+packages/api-platform/src/assets.test.ts
+  h_18044dd1b61a81 287
+packages/api-platform/src/routes/deployments.test.ts
+  h_18044dd1b61a81 54-58,175-608,929,993-994,998-1002,1178,1205,1344,1466
+packages/api-platform/src/routes/deployments.ts
+  h_18044dd1b61a81 53,112-120,123,196,198-199,209,216,225,235,237,243,245-246,770-798,848-864
+packages/asset-delivery/package.json
+  h_18044dd1b61a81 28-32,40
+packages/asset-delivery/src/deployment-limits.ts
+  h_18044dd1b61a81 1-12
+packages/asset-delivery/src/index.test.ts
+  h_18044dd1b61a81 10,164,166
+packages/asset-delivery/src/index.ts
+  h_18044dd1b61a81 4,11-12
+packages/asset-delivery/src/static-assets.ts
+  h_18044dd1b61a81 1-6
+packages/cli/README.md
+  h_18044dd1b61a81 7-10
+packages/cli/src/deploy.test.ts
+  h_18044dd1b61a81 13,18,156-240,242,789,861,863,879-935
+packages/cli/src/deploy.ts
+  h_18044dd1b61a81 13-16,205,217-218,481-484,486-489,491-502,642
+packages/core/src/server/routes/deployments.ts
+  h_18044dd1b61a81 123
+packages/vite/src/builder/upload-manifest.ts
+  h_18044dd1b61a81 1,4-8,48,68
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "569e0c9c44b61f8be5eb759d26d457e1ef968dac",
+  "prompts": {},
+  "humans": {
+    "h_18044dd1b61a81": {
+      "author": "Alfie Jones <alfie.jones@hotmail.co.uk>"
+    }
+  }
+}
