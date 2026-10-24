@@ -1,14 +1,11 @@
+import { handlerGen } from "@orpc/experimental-effect";
 import { openapi } from "@orpc/openapi";
 import {
   eventIterator,
   ORPCError,
   streamToAsyncIteratorObject,
 } from "@orpc/server";
-import { appAgent } from "@patchsmith/agent-fx/workflows";
-import {
-  AppAgentThreadError,
-  resolveAppAgentThread,
-} from "@patchsmith/agent/threads";
+import { AppAgentThreadError } from "@patchsmith/agent/threads";
 import { issueAgentToken } from "@patchsmith/api-utils/agent-token";
 import {
   asSchema,
@@ -18,21 +15,22 @@ import {
   validateUIMessages,
 } from "ai";
 import type { UIMessageChunk } from "ai";
-import { getRun, start } from "workflow/api";
-import type { Run } from "workflow/api";
+import { Effect } from "effect";
 import { z } from "zod";
 
 import {
   createAgentStreamToken,
   verifyAgentStreamToken,
 } from "#agent-stream-token";
+import { AppWithCurrentDeployment } from "#app-discovery";
 import { appSelectorSchema } from "#app-selector";
-import { authenticateCliRequest } from "#cli-token";
-import { env } from "#env";
-import { findAppInScopes, o, cliRouter } from "#procedures";
+import { authenticateCliRequestEffect } from "#cli-token";
+import { findAppInScopesEffect, o, cliRouter } from "#procedures";
 import { canonicalizeScope } from "#scope";
+import { attempt, PlatformAgent, PlatformConfig } from "#services";
+import type { AgentRun } from "#services";
 
-import { AppWithCurrentDeployment, createAppRecord } from "./apps";
+import { createAppRecordEffect } from "./apps";
 
 const require = <T>(value: T | null | undefined): T => {
   if (value === null || value === undefined) {
@@ -99,22 +97,27 @@ const create = cliRouter
     })
   )
   .output(z.object({ body: AppWithCurrentDeployment }))
-  .handler(async ({ context, input }) => {
-    const token = await authenticateCliRequest(context, input.body.deployToken);
-
-    return {
-      body: await createAppRecord(
+  .handler(
+    handlerGen(function* create({ context, input }) {
+      const token = yield* authenticateCliRequestEffect(
         context,
-        {
-          description: input.body.description,
-          name: input.body.name,
-          scope: token.scope,
-          slug: input.body.slug,
-        },
-        true
-      ),
-    };
-  });
+        input.body.deployToken
+      );
+
+      return {
+        body: yield* createAppRecordEffect(
+          context,
+          {
+            description: input.body.description,
+            name: input.body.name,
+            scope: token.scope,
+            slug: input.body.slug,
+          },
+          true
+        ),
+      };
+    })
+  );
 
 const chat = cliRouter
   .meta(openapi({ method: "POST", outputStructure: "compact", path: "/chat" }))
@@ -127,74 +130,98 @@ const chat = cliRouter
     })
   )
   .output(eventIterator(agentChunkSchema))
-  .handler(async ({ context, input, signal }) => {
-    const token = await authenticateCliRequest(context, input.body.deployToken);
+  .handler(
+    handlerGen(function* chat({ context, input, signal }) {
+      const agentService = yield* PlatformAgent;
+      const env = yield* PlatformConfig;
 
-    const app = await findAppInScopes(context.project.id, input.body.app, [
-      canonicalizeScope(token.scope),
-    ]);
+      const token = yield* authenticateCliRequestEffect(
+        context,
+        input.body.deployToken
+      );
 
-    if (!app.createdByAgent) {
-      throw new ORPCError("FORBIDDEN", {
-        message:
-          "The agent can only edit apps created by AI. Create a new app to continue.",
-      });
-    }
+      const app = yield* findAppInScopesEffect(
+        context.project.id,
+        input.body.app,
+        [canonicalizeScope(token.scope)]
+      );
 
-    const { body } = input;
-    let threadId: string;
-    let run: Run<Awaited<ReturnType<typeof appAgent>>>;
-    let startIndex = 0;
-
-    if (body.type === "resume") {
-      if (
-        !verifyAgentStreamToken(app.id, body.threadId, body.runId, body.token)
-      ) {
-        throw new ORPCError("NOT_FOUND", {
-          message: "Agent run not found for this app and thread.",
-        });
-      }
-
-      ({ threadId, startIndex } = body);
-      run = getRun(body.runId);
-    } else {
-      let messages;
-
-      try {
-        messages = await convertToModelMessages(
-          await validateUIMessages({ messages: body.messages })
+      if (!app.createdByAgent) {
+        return yield* Effect.fail(
+          new ORPCError("FORBIDDEN", {
+            message:
+              "The agent can only edit apps created by AI. Create a new app to continue.",
+          })
         );
-      } catch {
-        throw new ORPCError("BAD_REQUEST", {
-          message: "Invalid agent messages.",
-        });
       }
 
-      try {
-        threadId = await resolveAppAgentThread(app.id, body.threadId);
-      } catch (error) {
-        if (error instanceof AppAgentThreadError) {
-          throw new ORPCError("BAD_REQUEST", { message: error.message });
+      const { body } = input;
+      let threadId: string;
+      let run: AgentRun;
+      let startIndex = 0;
+
+      if (body.type === "resume") {
+        if (
+          !verifyAgentStreamToken(
+            app.id,
+            body.threadId,
+            body.runId,
+            body.token,
+            env.AUTH_SECRET
+          )
+        ) {
+          return yield* Effect.fail(
+            new ORPCError("NOT_FOUND", {
+              message: "Agent run not found for this app and thread.",
+            })
+          );
         }
 
-        throw error;
-      }
+        ({ threadId, startIndex } = body);
+        run = yield* agentService.getRun(body.runId);
+      } else {
+        const messages = yield* Effect.tryPromise({
+          catch: () =>
+            new ORPCError("BAD_REQUEST", {
+              message: "Invalid agent messages.",
+            }),
+          try: async () =>
+            await convertToModelMessages(
+              await validateUIMessages({ messages: body.messages })
+            ),
+        });
 
-      // Reuse an agent credential across its authorized scope without extending its expiry.
-      run = await start(appAgent, [
-        {
-          agentToken:
-            context.agentToken?.token ??
-            (await issueAgentToken(
-              {
-                appId: app.id,
-                cliTokenId: token.id,
-                projectId: context.project.id,
-                scope: token.scope,
-              },
-              require(env.AUTH_SECRET),
-              env.OPENAPI_SERVER_URL ?? "https://patchsmith.io/api/platform"
-            )),
+        threadId = yield* agentService
+          .resolveThread(app.id, body.threadId)
+          .pipe(
+            Effect.mapError((error) => {
+              const cause = "cause" in error ? error.cause : error;
+
+              return cause instanceof AppAgentThreadError
+                ? new ORPCError("BAD_REQUEST", { message: cause.message })
+                : error;
+            })
+          );
+
+        // Reuse an agent credential across its authorized scope without extending its expiry.
+        const agentToken =
+          context.agentToken?.token ??
+          (yield* attempt(
+            async () =>
+              await issueAgentToken(
+                {
+                  appId: app.id,
+                  cliTokenId: token.id,
+                  projectId: context.project.id,
+                  scope: token.scope,
+                },
+                require(env.AUTH_SECRET),
+                env.OPENAPI_SERVER_URL ?? "https://patchsmith.io/api/platform"
+              )
+          ));
+
+        run = yield* agentService.start({
+          agentToken,
           appId: app.id,
           hostUrl: body.hostUrl,
           instructions: body.instructions,
@@ -202,59 +229,64 @@ const chat = cliRouter
           model: APP_AGENT_MODEL,
           schema: body.schema,
           threadId,
-        },
-      ]);
-    }
+        });
+      }
 
-    const streamToken = createAgentStreamToken(app.id, threadId, run.runId);
+      const streamToken = createAgentStreamToken(
+        app.id,
+        threadId,
+        run.runId,
+        env.AUTH_SECRET
+      );
 
-    return streamToAsyncIteratorObject(
-      createUIMessageStream({
-        execute: async ({ writer }) => {
-          writer.write({
-            data: { runId: run.runId, threadId, token: streamToken },
-            transient: true,
-            type: "data-run",
-          });
-          const controller = new AbortController();
-          const completed = run.returnValue;
-          writer.merge(
-            run
-              .getReadable<UIMessageChunk>({
-                startIndex,
-              })
-              .pipeThrough(
-                new TransformStream<UIMessageChunk, UIMessageChunk>({
-                  async flush(stream) {
-                    await completed;
-                    stream.enqueue({
-                      data: { runId: run.runId },
-                      transient: true,
-                      type: "data-run-complete",
-                    });
-                  },
-                }),
-                {
-                  signal: controller.signal,
-                }
-              )
-          );
+      return streamToAsyncIteratorObject(
+        createUIMessageStream({
+          execute: async ({ writer }) => {
+            writer.write({
+              data: { runId: run.runId, threadId, token: streamToken },
+              transient: true,
+              type: "data-run",
+            });
+            const controller = new AbortController();
+            const completed = run.returnValue;
+            writer.merge(
+              run
+                .getReadable({
+                  startIndex,
+                })
+                .pipeThrough(
+                  new TransformStream<UIMessageChunk, UIMessageChunk>({
+                    async flush(stream) {
+                      await completed;
+                      stream.enqueue({
+                        data: { runId: run.runId },
+                        transient: true,
+                        type: "data-run-complete",
+                      });
+                    },
+                  }),
+                  {
+                    signal: controller.signal,
+                  }
+                )
+            );
 
-          try {
-            // Finish the response only after cleanup releases the app's Drive.
-            await completed;
-          } catch (error) {
-            // A busy Drive can fail before the workflow opens its model stream.
-            controller.abort(error);
-            throw error;
-          }
-        },
-        onError: (error) =>
-          error instanceof Error ? error.message : String(error),
-      }),
-      { signal }
-    );
-  });
+            try {
+              // Finish the response only after cleanup releases the app's Drive.
+              await completed;
+            } catch (error) {
+              // A busy Drive can fail before the workflow opens its model stream.
+              controller.abort(error);
+              throw error;
+            }
+          },
+          onError: (error) =>
+            error instanceof Error ? error.message : String(error),
+        }),
+        { signal }
+      );
+    })
+  );
 
 export const appAgentRouter = o
   .meta(openapi({ prefix: "/app-agent" }))

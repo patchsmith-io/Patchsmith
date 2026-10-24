@@ -2,7 +2,7 @@ import { call } from "@orpc/server";
 import { organization } from "@patchsmith/db/schema/auth";
 import { cliAuthSession, cliToken } from "@patchsmith/db/schema/cli-auth";
 import { project as projectTable } from "@patchsmith/db/schema/project";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import {
   afterEach,
   beforeEach,
@@ -15,16 +15,7 @@ import {
 import type { Context } from "#context";
 import { env } from "#env";
 import { createTestDb } from "#test/pglite";
-
-// SAFETY: The fixture controls this value; this assertion bridges the minimal test double to the API whose behavior is asserted below.
-const testState = vi.hoisted(() => ({ db: undefined as unknown }));
-
-vi.mock("@patchsmith/db", () => ({
-  createDb: () => testState.db,
-  get db() {
-    return testState.db;
-  },
-}));
+import { testServices } from "#test/services";
 
 const { cliAuthRouter } = await import("./cli-auth");
 
@@ -43,7 +34,10 @@ const expectedScope = {
 
 const expectedScopeKey = "83f6cbb3372e91fda7451be1728a9e91";
 
+let services: ReturnType<typeof testServices>;
+
 const createContext = (): Context => ({
+  ...services,
   organization: {
     createdAt: new Date("2026-01-01T00:00:00.000Z"),
     id: organizationId,
@@ -91,7 +85,7 @@ describe("platform CLI auth scopes", () => {
     const testDb = await createTestDb();
     ({ client } = testDb);
     ({ db } = testDb);
-    testState.db = db;
+    services = testServices({ database: db });
 
     await db.insert(organization).values({
       createdAt: new Date("2026-01-01T00:00:00.000Z"),
@@ -239,5 +233,115 @@ describe("platform CLI auth scopes", () => {
         { context }
       )
     ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  });
+  it("reports pending, denied, and expired sessions without issuing credentials", async () => {
+    const context = createContext();
+    const started = await call(cliAuthRouter.start, { body: {} }, { context });
+    const pollInput = { body: { deviceCode: started.body.deviceCode } };
+    await expect(
+      call(cliAuthRouter.poll, pollInput, { context })
+    ).resolves.toEqual({ body: { status: "pending" } });
+    await call(
+      cliAuthRouter.deny,
+      { body: { userCode: started.body.userCode } },
+      { context }
+    );
+    await expect(
+      call(cliAuthRouter.poll, pollInput, { context })
+    ).resolves.toEqual({ body: { status: "denied" } });
+    const session = await db.query.cliAuthSession.findFirst();
+
+    if (!session) {
+      throw new Error("Missing auth session");
+    }
+
+    await db
+      .update(cliAuthSession)
+      .set({ expiresAt: new Date(0) })
+      .where(eq(cliAuthSession.id, session.id));
+    await expect(
+      call(cliAuthRouter.poll, pollInput, { context })
+    ).resolves.toEqual({ body: { status: "expired" } });
+    expect(await db.query.cliToken.findMany()).toEqual([]);
+  });
+
+  it("consumes an approved session only once across concurrent polls", async () => {
+    const context = createContext();
+    const started = await call(cliAuthRouter.start, { body: {} }, { context });
+    await call(
+      cliAuthRouter.approve,
+      { body: { scope, userCode: started.body.userCode } },
+      { context }
+    );
+
+    const poll = async () =>
+      await call(
+        cliAuthRouter.poll,
+        { body: { deviceCode: started.body.deviceCode } },
+        { context }
+      );
+
+    const results = await Promise.allSettled([poll(), poll()]);
+    expect(
+      results.filter((result) => result.status === "fulfilled")
+    ).toHaveLength(1);
+    expect(
+      results.filter((result) => result.status === "rejected")
+    ).toMatchObject([{ reason: { code: "NOT_FOUND" } }]);
+    expect(await db.query.cliToken.findMany()).toHaveLength(1);
+    expect(await db.query.cliAuthSession.findMany()).toEqual([]);
+  });
+
+  it("rolls back session consumption when credential persistence fails", async () => {
+    const context = createContext();
+    const started = await call(cliAuthRouter.start, { body: {} }, { context });
+    await call(
+      cliAuthRouter.approve,
+      { body: { scope, userCode: started.body.userCode } },
+      { context }
+    );
+    await db.execute(
+      sql`CREATE FUNCTION fail_cli_insert() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'Token persistence failed'; END $$ LANGUAGE plpgsql`
+    );
+    await db.execute(
+      sql`CREATE TRIGGER fail_cli_insert BEFORE INSERT ON cli_token FOR EACH ROW EXECUTE FUNCTION fail_cli_insert()`
+    );
+    await expect(
+      call(
+        cliAuthRouter.poll,
+        { body: { deviceCode: started.body.deviceCode } },
+        { context }
+      )
+    ).rejects.toMatchObject({ _tag: "PlatformDependencyError" });
+    expect(await db.query.cliAuthSession.findMany()).toEqual([
+      expect.objectContaining({ status: "approved" }),
+    ]);
+    expect(await db.query.cliToken.findMany()).toEqual([]);
+  });
+
+  it("does not let another project approve or poll a session", async () => {
+    const context = createContext();
+    const started = await call(cliAuthRouter.start, { body: {} }, { context });
+
+    const foreign = {
+      ...context,
+      project: { ...context.project, id: crypto.randomUUID() },
+    };
+
+    await expect(
+      call(
+        cliAuthRouter.approve,
+        { body: { scope, userCode: started.body.userCode } },
+        { context: foreign }
+      )
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(
+      call(
+        cliAuthRouter.poll,
+        { body: { deviceCode: started.body.deviceCode } },
+        { context: foreign }
+      )
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(await db.query.cliToken.findMany()).toEqual([]);
   });
 });

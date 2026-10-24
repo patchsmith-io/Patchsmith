@@ -5,13 +5,16 @@ import { app, appDeployment } from "@patchsmith/db/schema/apps";
 import { organization } from "@patchsmith/db/schema/auth";
 import { cliToken } from "@patchsmith/db/schema/cli-auth";
 import { project } from "@patchsmith/db/schema/project";
+import { Effect } from "effect";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { z } from "zod";
 
 import { env } from "#env";
 import { canonicalizeScope } from "#scope";
 import type { Scope } from "#scope";
+import { attempt } from "#services";
 import { createTestDb } from "#test/pglite";
+import { testServices } from "#test/services";
 
 const requireValue = <T>(value: T | null | undefined): T => {
   if (value === null || value === undefined) {
@@ -21,32 +24,21 @@ const requireValue = <T>(value: T | null | undefined): T => {
   return value;
 };
 
-// SAFETY: The fixture controls this value; this assertion bridges the minimal test double to the API whose behavior is asserted below.
-const mocks = vi.hoisted(() => ({
-  apiKey: vi.fn(),
-  db: undefined as unknown,
+const mocks = {
+  apiKey: vi.fn<
+    (input: { body: { configId: string; key: string } }) => Promise<{
+      valid: boolean;
+      key?: { metadata?: { projectId?: string } };
+    }>
+  >(),
   storage: {
     createDownloadUrl: vi.fn(),
     createUploadUrl: vi.fn(),
     delete: vi.fn(),
     head: vi.fn(),
-    type: "s3",
+    type: "s3" as const,
   },
-}));
-
-vi.mock("@patchsmith/db", () => ({
-  get db() {
-    return mocks.db;
-  },
-}));
-
-vi.mock("@patchsmith/auth", () => ({
-  auth: { api: { verifyApiKey: mocks.apiKey } },
-}));
-
-vi.mock("@patchsmith/storage", () => ({ getStorage: () => mocks.storage }));
-
-vi.mock("@patchsmith/kv", () => ({ getKV: () => null }));
+};
 
 const { createContext, contextErrorResponse } = await import("#context");
 const { appRouter } = await import("./apps");
@@ -68,6 +60,8 @@ const scope = canonicalizeScope({
   value: { userId: "user-one" },
 });
 
+const http = vi.fn<typeof fetch>();
+let services: ReturnType<typeof testServices>;
 let database: Awaited<ReturnType<typeof createTestDb>>;
 let jwt: string;
 let sourceTokenId: string;
@@ -100,7 +94,7 @@ const post = async (path: string, body: AgentRequestBody = {}) => {
   let context;
 
   try {
-    context = await createContext({ request: input });
+    context = await createContext({ request: input, ...services });
   } catch (error) {
     const response = contextErrorResponse(error);
 
@@ -140,9 +134,27 @@ const deploymentInput = (appId: string) => ({
 });
 
 beforeEach(async () => {
+  http.mockReset();
   vi.clearAllMocks();
   database = await createTestDb();
-  mocks.db = database.db;
+  services = testServices({
+    credentials: {
+      verifyProjectKey: (key) =>
+        attempt(async () => {
+          const result = await mocks.apiKey({
+            body: { configId: "project-host", key },
+          });
+
+          return {
+            projectId: result?.key?.metadata?.projectId,
+            valid: result?.valid ?? false,
+          };
+        }),
+    },
+    database: database.db,
+    fetch: http,
+    storage: { get: Effect.succeed(mocks.storage) },
+  });
   const { db } = database;
   await db.insert(organization).values({
     createdAt: new Date(),
@@ -307,7 +319,10 @@ it("rejects apps outside the scope or project", async () => {
 
 it("keeps ordinary CLI tokens on the host authentication path", async () => {
   await expect(
-    createContext({ request: request("/deployments", {}, tokenSecret) })
+    createContext({
+      request: request("/deployments", {}, tokenSecret),
+      ...services,
+    })
   ).rejects.toThrow("Invalid API key");
   expect(mocks.apiKey).toHaveBeenCalled();
 });
@@ -323,7 +338,7 @@ it("publishes a verified upload to the authorized app", async () => {
   mocks.storage.createDownloadUrl.mockResolvedValue({
     url: "https://uploads.test/client.js",
   });
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("client-code"));
+  http.mockResolvedValue(new Response("client-code"));
 
   const published = await post(
     `/deployments/${requireValue(created.body.deployment).id}`,
@@ -414,9 +429,9 @@ it("maps missing credentials to 401 and unavailable dependencies to 503", () => 
 });
 
 it("keeps runtime-only metadata private from CLI credentials", async () => {
-  const { getRuntimeBundle } = await import("./runtime");
+  const { getRuntimeBundle } = await import("./app-runtime");
   const input = request(`/apps/${authorizedAppId}/runtime`);
-  const context = await createContext({ request: input });
+  const context = await createContext({ request: input, ...services });
 
   const result = await new OpenAPIHandler({ runtime: getRuntimeBundle }).handle(
     input,

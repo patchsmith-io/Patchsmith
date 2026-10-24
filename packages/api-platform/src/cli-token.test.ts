@@ -1,117 +1,95 @@
 import { hashSecret } from "@patchsmith/api-utils/hashing";
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vite-plus/test";
+import { cliToken } from "@patchsmith/db/schema/cli-auth";
+import { Effect } from "effect";
+import { TestClock } from "effect/testing";
+import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 
-import { canonicalizeScope } from "./scope";
+import { authenticateCliEffect } from "#cli-token";
+import { env } from "#env";
+import { runPlatform } from "#services";
+import type { PlatformServices } from "#services";
+import { createPlatformFixture } from "#test/platform";
+import { testServices } from "#test/services";
 
-const require = <T>(value: T | null | undefined): T => {
-  if (value === null || value === undefined) {
-    throw new Error("Expected a defined value.");
-  }
-
-  return value;
-};
-
-// SAFETY: The fixture controls this value; this assertion bridges the minimal test double to the API whose behavior is asserted below.
-interface TestAuthEnv {
-  AUTH_SECRET: string | undefined;
-}
-
-const mocks = vi.hoisted(() => {
-  const env: TestAuthEnv = { AUTH_SECRET: "test-cli-token-secret" };
-
-  return { env, findToken: vi.fn() };
-});
-
-vi.mock("@patchsmith/db", () => ({
-  db: { query: { cliToken: { findFirst: mocks.findToken } } },
-}));
-
-vi.mock("#env", () => ({ env: mocks.env }));
-
-const { authenticateCli } = await import("./cli-token");
-
-const canonical = canonicalizeScope({
-  name: "org",
-  value: { environment: "dev", tenant: "one" },
-});
+const secret = "test-cli-token-secret-test-cli-token-secret";
+let fixture: Awaited<ReturnType<typeof createPlatformFixture>>;
+const config = { ...env, AUTH_SECRET: secret };
 
 const validToken = () => ({
-  expiresAt: new Date(Date.now() + 60_000),
-  id: "cli-one",
-  projectId: "project-one",
-  revokedAt: null,
-  scope: { name: "org", value: { environment: "dev", tenant: "one" } },
-  scopeKey: canonical.scopeKey,
+  expiresAt: new Date(60_000),
+  projectId: fixture.project.id,
+  tokenHash: hashSecret("deploy-token", secret),
+  ...fixture.scope,
 });
 
-beforeEach(() => {
-  vi.clearAllMocks();
-  vi.useFakeTimers();
-  vi.setSystemTime(new Date("2026-10-06T00:00:00Z"));
-  mocks.env.AUTH_SECRET = "test-cli-token-secret";
-  mocks.findToken.mockResolvedValue(validToken());
+const run = async <A, E>(effect: Effect.Effect<A, E, PlatformServices>) =>
+  await runPlatform(
+    effect.pipe(Effect.provide(TestClock.layer())),
+    testServices({ config, database: fixture.db })
+  );
+
+beforeEach(async () => {
+  fixture = await createPlatformFixture();
+  config.AUTH_SECRET = secret;
 });
 
-afterEach(() => vi.useRealTimers());
+afterEach(async () => {
+  if (!fixture.client.closed) {
+    await fixture.client.close();
+  }
+});
 
-describe("shared platform CLI token authentication", () => {
-  it("binds token lookup to the project and hashed credential and returns canonical scope", async () => {
-    const token = await authenticateCli("project-one", "deploy-token");
-    expect(mocks.findToken).toHaveBeenCalledWith({
-      where: {
-        projectId: "project-one",
-        tokenHash: hashSecret("deploy-token", require(mocks.env.AUTH_SECRET)),
-      },
+describe("platform CLI token authentication", () => {
+  it("looks up only the current project's hashed credential and returns canonical scope", async () => {
+    await fixture.db.insert(cliToken).values(validToken());
+    await expect(
+      run(authenticateCliEffect(fixture.project.id, "deploy-token"))
+    ).resolves.toMatchObject({
+      projectId: fixture.project.id,
+      ...fixture.scope,
     });
-    expect(token).toEqual({
-      ...validToken(),
-      scope: canonical.scope,
-      scopeKey: canonical.scopeKey,
-    });
+    await expect(
+      run(authenticateCliEffect(crypto.randomUUID(), "deploy-token"))
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(
+      run(authenticateCliEffect(fixture.project.id, "wrong-token"))
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
   });
-
   it.each([
-    ["missing", undefined],
     ["revoked", { revokedAt: new Date() }],
-    ["expired", { expiresAt: new Date(0) }],
-    ["expires exactly now", { expiresAt: new Date("2026-10-06T00:00:00Z") }],
+    ["expired", { expiresAt: new Date(-1) }],
+    ["expires exactly now", { expiresAt: new Date(0) }],
     ["malformed scope", { scope: { name: "org", value: {} } }],
     ["mismatched scope key", { scopeKey: "0".repeat(32) }],
-  ])("rejects a %s token", async (_name, overrides) => {
-    mocks.findToken.mockResolvedValueOnce(
-      overrides ? { ...validToken(), ...overrides } : undefined
-    );
+  ])("rejects a %s credential", async (_name, overrides) => {
+    await fixture.db.insert(cliToken).values({ ...validToken(), ...overrides });
     await expect(
-      authenticateCli("project-one", "deploy-token")
+      run(authenticateCliEffect(fixture.project.id, "deploy-token"))
     ).rejects.toMatchObject({
       code: "UNAUTHORIZED",
       message: "Invalid CLI deploy token.",
     });
   });
-
-  it("rejects runtime credentials before reading tokens", async () => {
+  it("rejects runtime credentials before accessing storage", async () => {
     await expect(
-      authenticateCli("project-one", "deploy-token", true)
-    ).rejects.toMatchObject({
-      code: "FORBIDDEN",
-    });
-    expect(mocks.findToken).not.toHaveBeenCalled();
+      run(authenticateCliEffect("invalid-uuid", "deploy-token", true))
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
-
-  it("reports missing auth configuration before reading tokens", async () => {
-    mocks.env.AUTH_SECRET = undefined;
+  it("reports unavailable configuration before accessing storage", async () => {
     await expect(
-      authenticateCli("project-one", "deploy-token")
-    ).rejects.toMatchObject({
-      code: "SERVICE_UNAVAILABLE",
-    });
-    expect(mocks.findToken).not.toHaveBeenCalled();
+      runPlatform(
+        authenticateCliEffect("invalid-uuid", "deploy-token"),
+        testServices({
+          config: { ...config, AUTH_SECRET: undefined },
+          database: fixture.db,
+        })
+      )
+    ).rejects.toMatchObject({ code: "SERVICE_UNAVAILABLE" });
+  });
+  it("retains infrastructure failures as typed errors instead of rejecting valid credentials", async () => {
+    await fixture.client.close();
+    await expect(
+      run(authenticateCliEffect(fixture.project.id, "deploy-token"))
+    ).rejects.toMatchObject({ _tag: "PlatformDependencyError" });
   });
 });

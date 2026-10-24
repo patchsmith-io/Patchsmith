@@ -2,82 +2,18 @@ import {
   Client,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
-import { os } from "@orpc/server";
-import { expect, it, vi } from "vite-plus/test";
-import { z } from "zod";
+import { expect, it } from "vite-plus/test";
+
+import { createPlatformFixture } from "#test/platform";
+import { testServices } from "#test/services";
 
 import type { Context } from "./context";
-
-const require = <T>(value: T | null | undefined): T => {
-  if (value === null || value === undefined) {
-    throw new Error("Expected a defined value.");
-  }
-
-  return value;
-};
-
-interface ListInput {
-  input: { body: { scopes: { name: string; value: { tenant: string } }[] } };
-}
-
-interface ListResult {
-  body: {
-    items: { id: string; name: string }[];
-    pagination: { hasMore: boolean };
-  };
-}
-
-const calls = vi.hoisted(() => ({
-  list: vi.fn<(options: ListInput) => Promise<ListResult>>(),
-}));
-
-vi.mock("@patchsmith/db", () => ({ db: {} }));
-
-vi.mock("./routes/apps.ts", () => ({
-  appRouter: {
-    list: os
-      .input(
-        z.object({
-          body: z.object({
-            scopes: z.array(
-              z.object({
-                name: z.string(),
-                value: z.object({ tenant: z.string() }),
-              })
-            ),
-          }),
-        })
-      )
-      .handler(calls.list),
-  },
-}));
-
-vi.mock("@patchsmith/agent-fx/workflows", () => ({
-  appAgent: vi.fn(),
-  cancelAppAgent: vi.fn(),
-}));
-
-vi.mock("workflow/api", () => ({ start: vi.fn() }));
-
-vi.mock("@patchsmith/api-utils/dev-delay", () => ({
-  devDelayMiddleware: async <TResult>({ next }: { next: () => TResult }) =>
-    await next(),
-}));
-
-vi.mock("@patchsmith/api-utils/rate-limiting", () => ({
-  createRateLimiter: vi.fn(),
-  ratelimitMiddleware:
-    () =>
-    async <TResult>({ next }: { next: () => TResult }) =>
-      await next(),
-}));
 
 const { handleAppAgentMcpRequest } = await import("./app-agent-mcp");
 
 it("connects an ordinary MCP client directly to the platform with standard headers", async () => {
-  calls.list.mockResolvedValue({
-    body: { items: [], pagination: { hasMore: false } },
-  });
+  const fixture = await createPlatformFixture();
+  const services = testServices({ database: fixture.db });
   const url = "https://platform.test/api/platform/app-agent/mcp";
 
   const headers = {
@@ -112,8 +48,9 @@ it("connects an ordinary MCP client directly to the platform with standard heade
             request,
             /* oxlint-disable typescript/no-unsafe-type-assertion -- This test supplies the context members read by the handler; unrelated request context services are outside this scenario. */
             {
-              organization: { id: "org" },
-              project: { id: "project" },
+              ...services,
+              organization: fixture.organization,
+              project: fixture.project,
             } as Context
             /* oxlint-enable typescript/no-unsafe-type-assertion */
           );
@@ -135,10 +72,13 @@ it("connects an ordinary MCP client directly to the platform with standard heade
     });
 
     expect(awaitedResult2.isError).not.toBe(true);
-    expect(require(calls.list.mock.lastCall)[0].input.body.scopes).toEqual([
-      { name: "org", value: { tenant: "墨尔本" } },
-    ]);
+    expect(awaitedResult2.content).toEqual(
+      expect.arrayContaining([expect.objectContaining({ type: "text" })])
+    );
+    // Its tenant differs from the asserted Unicode tenant, so the real router must hide it.
+    expect(JSON.stringify(awaitedResult2)).not.toContain(fixture.app.shortId);
   } finally {
     await client.close();
+    await fixture.client.close();
   }
 });

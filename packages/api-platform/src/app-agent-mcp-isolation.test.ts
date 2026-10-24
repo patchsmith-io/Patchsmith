@@ -1,9 +1,9 @@
-import type { appAgent } from "@patchsmith/agent-fx/workflows";
 import { verifyAgentToken } from "@patchsmith/api-utils/agent-token";
 import { app } from "@patchsmith/db/schema/apps";
 import { organization } from "@patchsmith/db/schema/auth";
 import { cliToken } from "@patchsmith/db/schema/cli-auth";
 import { project } from "@patchsmith/db/schema/project";
+import { Effect } from "effect";
 import {
   afterEach,
   beforeEach,
@@ -13,6 +13,10 @@ import {
   vi,
 } from "vite-plus/test";
 import type { z } from "zod";
+
+import { attempt } from "#services";
+import type { AgentInput, AgentRun, AgentStartOptions } from "#services";
+import { testServices } from "#test/services";
 
 import type { Context } from "./context";
 import { env } from "./env";
@@ -27,50 +31,12 @@ const requireValue = <T>(value: T | null | undefined): T => {
   return value;
 };
 
-// SAFETY: The fixture controls this value; this assertion bridges the minimal test double to the API whose behavior is asserted below.
-const state = vi.hoisted(() => ({
-  db: undefined as unknown,
-  start: vi.fn<
-    (
-      workflow: typeof appAgent,
-      args: [Parameters<typeof appAgent>[0]],
-      options?: { attributes?: Record<string, string> }
-    ) => Promise<{
-      runId: string;
-      cancel?: () => void | Promise<void>;
-      getReadable: (...args: never[]) => ReadableStream;
-      returnValue: Promise<unknown>;
-    }>
-  >(),
-}));
-
-vi.mock("@patchsmith/db", () => ({
-  get db() {
-    return state.db;
-  },
-}));
-
-vi.mock("@patchsmith/kv", () => ({ getKV: () => {} }));
-
-vi.mock("@patchsmith/agent-fx/workflows", () => ({
-  appAgent: vi.fn(),
-  cancelAppAgent: vi.fn(),
-}));
-
-vi.mock("workflow/api", () => ({ start: state.start }));
-
-vi.mock("@patchsmith/api-utils/dev-delay", () => ({
-  devDelayMiddleware: async <TResult>({ next }: { next: () => TResult }) =>
-    await next(),
-}));
-
-vi.mock("@patchsmith/api-utils/rate-limiting", () => ({
-  createRateLimiter: vi.fn(),
-  ratelimitMiddleware:
-    () =>
-    async <TResult>({ next }: { next: () => TResult }) =>
-      await next(),
-}));
+const state = {
+  start:
+    vi.fn<
+      (input: AgentInput, options?: AgentStartOptions) => Promise<AgentRun>
+    >(),
+};
 
 const { handleAppAgentMcpRequest } = await import("./app-agent-mcp");
 
@@ -133,7 +99,6 @@ describe("MCP database authorization", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     database = await createTestDb();
-    state.db = database.db;
 
     const [org] = await database.db
       .insert(organization)
@@ -160,6 +125,15 @@ describe("MCP database authorization", () => {
       .returning();
 
     context = {
+      ...testServices({
+        agent: {
+          resolveThread: (_appId, requested) =>
+            Effect.succeed(requested ?? "e773a870-df5a-4bea-9ebd-9be4c0b1897a"),
+          start: (input, options) =>
+            attempt(async () => await state.start(input, options)),
+        },
+        database: database.db,
+      }),
       organization: requireValue(org),
       project: requireValue(ownProject),
       storage: {
@@ -310,7 +284,7 @@ describe("MCP database authorization", () => {
     expect(grants.filter(({ id }) => id !== requireValue(grant).id)).toEqual(
       existingGrants
     );
-    const [, [input]] = requireValue(state.start.mock.lastCall);
+    const [input] = requireValue(state.start.mock.lastCall);
     expect(input.instructions).toBe("Use compact layouts.");
     expect(input.messages).toEqual([{ content: "Change it", role: "user" }]);
     expect(
@@ -350,10 +324,10 @@ describe("MCP database authorization", () => {
       scope: scope.scope,
       scopeKey: scope.scopeKey,
     });
-    expect(requireValue(state.start.mock.lastCall)[1][0].appId).toBe(
+    expect(requireValue(state.start.mock.lastCall)[0].appId).toBe(
       requireValue(created).id
     );
-    expect(requireValue(state.start.mock.lastCall)[1][0].instructions).toBe(
+    expect(requireValue(state.start.mock.lastCall)[0].instructions).toBe(
       "Use our purple palette."
     );
     const grants = await database.db.select().from(cliToken);

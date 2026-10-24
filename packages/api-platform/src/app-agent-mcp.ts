@@ -6,23 +6,26 @@ import type {
   AppAgentMcpExecution,
   AppAgentMcpResult,
 } from "@patchsmith/agent/mcp";
-import {
-  AppAgentThreadError,
-  resolveAppAgentThread,
-} from "@patchsmith/agent/threads";
+import { AppAgentThreadError } from "@patchsmith/agent/threads";
 import { issueAgentToken } from "@patchsmith/api-utils/agent-token";
 import { hashSecret } from "@patchsmith/api-utils/hashing";
-import { db } from "@patchsmith/db";
 import { cliToken } from "@patchsmith/db/schema/cli-auth";
 import { sanitizeErrorForLog } from "@patchsmith/observability";
 import type { UIMessageChunk } from "ai";
 import { eq } from "drizzle-orm";
-import type { Run } from "workflow/api";
+import { Clock, Effect } from "effect";
 import { z } from "zod";
 
+import {
+  attempt,
+  PlatformAgent,
+  PlatformConfig,
+  PlatformDatabase,
+  runPlatform,
+} from "#services";
+
 import type { Context } from "./context";
-import { env } from "./env";
-import { findAppInScopes, protectedRouter } from "./procedures";
+import { findAppInScopesEffect, protectedRouter } from "./procedures";
 import {
   canonicalizeScope,
   canonicalizeScopes,
@@ -110,191 +113,217 @@ export const handleAppAgentMcpRequest = async (
     prompt: string,
     execution: AppAgentMcpExecution,
     requestedThreadId?: string
-  ): Promise<AppAgentMcpResult> => {
-    execution.signal.throwIfAborted();
+  ): Promise<AppAgentMcpResult> =>
+    await runPlatform(
+      Effect.gen(function* runAuthorizedAgent() {
+        const db = yield* PlatformDatabase;
+        const config = yield* PlatformConfig;
+        const agent = yield* PlatformAgent;
 
-    // Discovery and tool definitions do not execute an agent. Keep workflow
-    // startup and stream processing out of those requests' import graph.
-    const [{ appAgent, cancelAppAgent }, { start }] = await Promise.all([
-      import("@patchsmith/agent-fx/workflows"),
-      import("workflow/api"),
-    ]);
+        const app = yield* findAppInScopesEffect(
+          context.project.id,
+          z.uuid().safeParse(appId).success
+            ? { id: appId }
+            : { shortId: appId },
+          scopes
+        );
 
-    execution.signal.throwIfAborted();
+        const secret = config.AUTH_SECRET;
 
-    const app = await findAppInScopes(
-      context.project.id,
-      z.uuid().safeParse(appId).success ? { id: appId } : { shortId: appId },
-      scopes
-    );
-
-    if (
-      !(
-        env.AUTH_SECRET !== undefined &&
-        env.AUTH_SECRET !== null &&
-        env.AUTH_SECRET !== ""
-      )
-    ) {
-      throw new ORPCError("SERVICE_UNAVAILABLE");
-    }
-
-    let threadId: string;
-
-    try {
-      threadId = await resolveAppAgentThread(app.id, requestedThreadId);
-    } catch (error) {
-      if (error instanceof AppAgentThreadError) {
-        throw new ORPCError("BAD_REQUEST", { message: error.message });
-      }
-
-      throw error;
-    }
-
-    // Reuse the existing CLI/JWT boundary for this agent's one-hour, single-scope grant.
-    // A source row keeps revocation checks identical to existing app agent turns.
-    const [grant] = await db
-      .insert(cliToken)
-      .values({
-        projectId: context.project.id,
-
-        ...canonicalizeScope(app.scope),
-
-        expiresAt: new Date(Date.now() + 3_600_000),
-
-        tokenHash: hashSecret(
-          randomBytes(32).toString("base64url"),
-          env.AUTH_SECRET
-        ),
-      })
-      .returning();
-
-    if (!grant) {
-      throw new ORPCError("SERVICE_UNAVAILABLE");
-    }
-
-    let run: Run<Awaited<ReturnType<typeof appAgent>>> | undefined;
-    const controller = new AbortController();
-    const signal = AbortSignal.any([execution.signal, controller.signal]);
-    let finished = false;
-
-    try {
-      const agentToken = await issueAgentToken(
-        {
-          appId: app.id,
-          cliTokenId: grant.id,
-          projectId: context.project.id,
-          scope: app.scope,
-        },
-        env.AUTH_SECRET,
-        env.OPENAPI_SERVER_URL ?? "https://patchsmith.io/api/platform"
-      );
-
-      execution.signal.throwIfAborted();
-
-      const attributes: AgentRunAttributes = {
-        "patchsmith.projectId": context.project.id,
-        "patchsmith.subjectId": input.subjectId,
-      };
-
-      run = await start(
-        appAgent,
-        [
-          {
-            agentToken,
-            appId: app.id,
-            hostUrl: input.hostUrl,
-            instructions: input.instructions,
-            messages: [{ content: prompt, role: "user" }],
-            model: "openai/gpt-6.1-sol",
-            threadId,
-          },
-        ],
-        {
-          attributes,
+        if (secret === undefined || secret === "") {
+          return yield* Effect.fail(new ORPCError("SERVICE_UNAVAILABLE"));
         }
-      );
-      const completed = run.returnValue;
-      // Setup can fail before the workflow opens its model stream.
-      void (async () => {
-        try {
-          await completed;
-        } catch (error) {
-          controller.abort(error);
-        }
-      })();
 
-      await execution.onProgress({
-        appId: app.shortId,
-        runId: run.runId,
-        status: "started",
-        threadId,
-      });
-      let answer = "";
-      const { runId } = run;
+        const threadId = yield* agent
+          .resolveThread(app.id, requestedThreadId)
+          .pipe(
+            Effect.mapError((error) => {
+              const cause = "cause" in error ? error.cause : error;
 
-      const stream = run
-        .getReadable<UIMessageChunk>()
-        .pipeThrough(new TransformStream<UIMessageChunk, UIMessageChunk>(), {
-          signal,
-        });
+              return cause instanceof AppAgentThreadError
+                ? new ORPCError("BAD_REQUEST", { message: cause.message })
+                : error;
+            })
+          );
 
-      for await (const chunk of stream) {
-        // oxlint-disable-next-line no-await-in-loop -- Preserve the order of progress updates from the agent.
-        await execution.onProgress({
-          appId: app.shortId,
-          chunk,
-          runId,
-          status: "streaming",
-          threadId,
-        });
+        const now = yield* Clock.currentTimeMillis;
 
-        if (chunk.type === "text-delta") {
-          answer += chunk.delta;
-        } else if (chunk.type === "text-end") {
-          answer += "\n\n";
-        } else if (chunk.type === "error" || chunk.type === "abort") {
-          throw new Error("App agent stopped before completing its response.");
-        }
-      }
+        const acquireGrant = Effect.gen(function* acquireGrant() {
+          const [grant] = yield* attempt(
+            async () =>
+              await db
+                .insert(cliToken)
+                .values({
+                  projectId: context.project.id,
+                  ...canonicalizeScope(app.scope),
+                  expiresAt: new Date(now + 3_600_000),
+                  tokenHash: hashSecret(
+                    randomBytes(32).toString("base64url"),
+                    secret
+                  ),
+                })
+                .returning()
+          );
 
-      const output = await completed;
-      finished = true;
-
-      return {
-        answer: answer.trim() || "App agent run ended.",
-        appId: app.shortId,
-        finishReason: output.finishReason,
-        runId: run.runId,
-        threadId,
-      };
-    } finally {
-      controller.abort();
-
-      try {
-        if (run && !finished) {
-          // Hard run cancellation doesn't execute workflow finally blocks.
-          try {
-            await run.cancel({
-              cancelReason: "MCP request ended before its agent completed",
-            });
-          } catch (error) {
-            // Preserve the request failure and still release resources if cancellation fails.
-            console.warn("App agent MCP cancellation failed", {
-              error: sanitizeErrorForLog(error),
-              runId: run.runId,
-            });
-          } finally {
-            await cancelAppAgent(app.id, run.runId);
+          if (!grant) {
+            return yield* Effect.fail(new ORPCError("SERVICE_UNAVAILABLE"));
           }
-        }
-      } finally {
-        await db
-          .update(cliToken)
-          .set({ revokedAt: new Date() })
-          .where(eq(cliToken.id, grant.id));
-      }
-    }
-  };
+
+          return grant;
+        });
+
+        return yield* Effect.acquireUseRelease(
+          acquireGrant,
+          (grant) =>
+            Effect.gen(function* useGrant() {
+              const agentToken = yield* attempt(
+                async () =>
+                  await issueAgentToken(
+                    {
+                      appId: app.id,
+                      cliTokenId: grant.id,
+                      projectId: context.project.id,
+                      scope: app.scope,
+                    },
+                    secret,
+                    config.OPENAPI_SERVER_URL ??
+                      "https://patchsmith.io/api/platform"
+                  )
+              );
+
+              const attributes: AgentRunAttributes = {
+                "patchsmith.projectId": context.project.id,
+                "patchsmith.subjectId": input.subjectId,
+              };
+
+              let finished = false;
+
+              return yield* Effect.acquireUseRelease(
+                agent.start(
+                  {
+                    agentToken,
+                    appId: app.id,
+                    hostUrl: input.hostUrl,
+                    instructions: input.instructions,
+                    messages: [{ content: prompt, role: "user" }],
+                    model: "openai/gpt-6.1-sol",
+                    threadId,
+                  },
+                  { attributes }
+                ),
+                (run) =>
+                  attempt(async (signal) => {
+                    const controller = new AbortController();
+                    const completed = run.returnValue;
+                    // A workflow can reject before opening its readable stream.
+                    void (async () => {
+                      try {
+                        await completed;
+                      } catch (error) {
+                        controller.abort(error);
+                      }
+                    })();
+
+                    try {
+                      await execution.onProgress({
+                        appId: app.shortId,
+                        runId: run.runId,
+                        status: "started",
+                        threadId,
+                      });
+                      let answer = "";
+
+                      const stream = run
+                        .getReadable()
+                        .pipeThrough(
+                          new TransformStream<UIMessageChunk, UIMessageChunk>(),
+                          {
+                            signal: AbortSignal.any([
+                              signal,
+                              controller.signal,
+                            ]),
+                          }
+                        );
+
+                      for await (const chunk of stream) {
+                        // oxlint-disable-next-line no-await-in-loop -- Preserve progress ordering within this agent stream.
+                        await execution.onProgress({
+                          appId: app.shortId,
+                          chunk,
+                          runId: run.runId,
+                          status: "streaming",
+                          threadId,
+                        });
+
+                        if (chunk.type === "text-delta") {
+                          answer += chunk.delta;
+                        } else if (chunk.type === "text-end") {
+                          answer += "\n\n";
+                        } else if (
+                          chunk.type === "error" ||
+                          chunk.type === "abort"
+                        ) {
+                          throw new Error(
+                            "App agent stopped before completing its response."
+                          );
+                        }
+                      }
+
+                      const output = await completed;
+                      finished = true;
+
+                      return {
+                        answer: answer.trim() || "App agent run ended.",
+                        appId: app.shortId,
+                        finishReason: output.finishReason,
+                        runId: run.runId,
+                        threadId,
+                      };
+                    } finally {
+                      controller.abort();
+                    }
+                  }),
+                (run) => {
+                  if (finished) {
+                    return Effect.void;
+                  }
+
+                  return attempt(async () => {
+                    await run.cancel({
+                      cancelReason:
+                        "MCP request ended before its agent completed",
+                    });
+                  }).pipe(
+                    Effect.catch((error) =>
+                      Effect.sync(() => {
+                        console.warn("App agent MCP cancellation failed", {
+                          error: sanitizeErrorForLog(error),
+                          runId: run.runId,
+                        });
+                      })
+                    ),
+                    Effect.ensuring(
+                      agent.cancel(app.id, run.runId).pipe(Effect.orDie)
+                    )
+                  );
+                }
+              );
+            }),
+          (grant) =>
+            Effect.gen(function* revokeGrant() {
+              const revokedAt = new Date(yield* Clock.currentTimeMillis);
+              yield* attempt(async () => {
+                await db
+                  .update(cliToken)
+                  .set({ revokedAt })
+                  .where(eq(cliToken.id, grant.id));
+              });
+            }).pipe(Effect.orDie)
+        );
+      }),
+      context,
+      execution.signal
+    );
 
   const handler = createAppAgentMcp(
     {

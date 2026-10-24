@@ -3,9 +3,30 @@ import { gzipSync } from "node:zlib";
 
 import { maxDeploymentBytes } from "@patchsmith/asset-delivery";
 import type { Storage } from "@patchsmith/storage";
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vite-plus/test";
 
-import { handleAssetRequest } from "./assets";
+import { testServices } from "#test/services";
+
+import { handleAssetRequest as serveAsset } from "./assets";
+
+const http = vi.fn<typeof fetch>();
+
+beforeEach(() => {
+  http.mockReset();
+  http.mockImplementation(
+    async (input, init) => await globalThis.fetch(input, init)
+  );
+});
+
+const handleAssetRequest = async (request: Request, storage: Storage | null) =>
+  await serveAsset(request, storage, testServices({ fetch: http }));
 
 const isStringValue = <TValue>(value: TValue): value is TValue & string =>
   typeof value === "string";
@@ -45,7 +66,7 @@ afterEach(() => vi.restoreAllMocks());
 describe("Node asset delivery", () => {
   it("rejects every server bundle URL before accessing private storage", async () => {
     const backend = storage();
-    const fetch = vi.spyOn(globalThis, "fetch");
+    const fetch = http;
     await Promise.all(
       [
         "server.js",
@@ -73,7 +94,7 @@ describe("Node asset delivery", () => {
 
   it("streams a valid object with browser-safe headers", async () => {
     const backend = storage();
-    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(bundle));
+    http.mockResolvedValueOnce(new Response(bundle));
     const response = await handleAssetRequest(new Request(url), backend);
     expect(backend.head).toHaveBeenCalledWith({ key });
     expect(await response.text()).toBe(bundle);
@@ -95,7 +116,7 @@ describe("Node asset delivery", () => {
 
   it("serves HEAD and OPTIONS without downloading the object", async () => {
     const backend = storage();
-    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const fetchMock = http;
 
     const head = await handleAssetRequest(
       new Request(url, { method: "HEAD" }),
@@ -130,7 +151,7 @@ describe("Node asset delivery", () => {
 it.each([404, 500])(
   "maps an upstream %s to a public asset failure",
   async (status) => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+    http.mockResolvedValueOnce(
       new Response("Private upstream details", { status })
     );
     const response = await handleAssetRequest(new Request(url), storage());
@@ -245,7 +266,7 @@ it("limits decoded gzip assets and cancels the upstream stream on overflow", asy
   });
   const cancel = vi.fn();
   let chunks = 0;
-  vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+  http.mockResolvedValueOnce(
     new Response(
       new ReadableStream<Uint8Array>({
         cancel,
@@ -275,9 +296,7 @@ it("serves decoded gzip assets at exactly the 10 MiB limit", async () => {
     contentType: "application/javascript",
     key,
   });
-  vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-    new Response(new Uint8Array(maxDeploymentBytes))
-  );
+  http.mockResolvedValueOnce(new Response(new Uint8Array(maxDeploymentBytes)));
   const response = await handleAssetRequest(new Request(url), backend);
   const awaitedResult2 = await response.arrayBuffer();
   expect(awaitedResult2.byteLength).toBe(maxDeploymentBytes);
