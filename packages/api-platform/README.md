@@ -2,6 +2,17 @@
 
 `@patchsmith/api-platform` implements the platform API for managing and running Patchsmith extensions.
 
+## Finding code
+
+- `src/routes/` contains HTTP endpoints. App CRUD and installations live in `apps.ts`; sessions, bundle metadata, and view resolution live in `app-runtime.ts`.
+- `src/app-runtime/` contains app execution support: authentication, access, view resolution, and deployment warm-up workflows. This refers to the app runtime, separate from Effect's runtime.
+- `src/deployments/verification.ts` inspects uploaded bundles and logos before publication.
+- `src/services.ts` defines Effect services and production layers. `context.ts` builds request context; `procedures.ts` defines shared authorization middleware.
+- Small shared modules stay in `src/`. `app-discovery.ts` shares app queries and response schemas between app and runtime routes.
+- Tests sit beside the code they exercise. Route suites are split by behavior; `src/test/` contains shared database and service fixtures.
+
+Use `@patchsmith/api-platform/app-runtime/*` and `@patchsmith/api-platform/routes/app-runtime` for the renamed modules. The previous `runtime/*` and `routes/runtime` package exports remain aliases.
+
 ## Connect to the app-agent MCP endpoint
 
 Connect Model Context Protocol (MCP) clients to `POST /api/platform/app-agent/mcp`. The web app mounts this streaming HTTP endpoint using `handleAppAgentMcpRequest` from `@patchsmith/api-platform/app-agent-mcp`. Send an MCP JSON-RPC request body and the required MCP metadata headers. Responses use MCP Server-Sent Events (SSE).

@@ -22,6 +22,7 @@ import {
   createAgentStreamToken,
   verifyAgentStreamToken,
 } from "#agent-stream-token";
+import { AppWithCurrentDeployment } from "#app-discovery";
 import { appSelectorSchema } from "#app-selector";
 import { authenticateCliRequestEffect } from "#cli-token";
 import { findAppInScopesEffect, o, cliRouter } from "#procedures";
@@ -29,7 +30,7 @@ import { canonicalizeScope } from "#scope";
 import { attempt, PlatformAgent, PlatformConfig } from "#services";
 import type { AgentRun } from "#services";
 
-import { AppWithCurrentDeployment, createAppRecordEffect } from "./apps";
+import { createAppRecordEffect } from "./apps";
 
 const require = <T>(value: T | null | undefined): T => {
   if (value === null || value === undefined) {

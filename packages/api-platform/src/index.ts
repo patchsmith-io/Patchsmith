@@ -39,7 +39,7 @@ export const platformRouter = {
     list: lazyDeploymentOperation("list"),
     publish: lazyDeploymentOperation("publish"),
     runtime: lazyOpenAPIRouter("/apps", async () => {
-      const { getRuntimeBundle } = await import("#routes/runtime");
+      const { getRuntimeBundle } = await import("#routes/app-runtime");
 
       return { default: getRuntimeBundle };
     }),

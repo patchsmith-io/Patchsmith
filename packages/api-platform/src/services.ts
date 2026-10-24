@@ -184,7 +184,7 @@ export const platformRuntimeLayer = Layer.effect(
           yield* attempt(async () => {
             const [{ start }, { warmAppDeployment }] = await Promise.all([
               import("workflow/api"),
-              import("#runtime/deployment-workflow"),
+              import("#app-runtime/deployment-workflow"),
             ]);
 
             await start(warmAppDeployment, [
@@ -199,7 +199,7 @@ export const platformRuntimeLayer = Layer.effect(
       issueToken: (identity: AppTokenIdentity) =>
         Effect.gen(function* issueToken() {
           const { issueAppRuntimeTokenEffect } = yield* attempt(
-            async () => await import("#runtime/auth")
+            async () => await import("#app-runtime/auth")
           );
 
           return yield* issueAppRuntimeTokenEffect(identity).pipe(
@@ -209,7 +209,7 @@ export const platformRuntimeLayer = Layer.effect(
       warmDeployment: (projectId: string, appId: string) =>
         Effect.gen(function* warmDeployment() {
           const { warmRuntimeDeploymentEffect } = yield* attempt(
-            async () => await import("#runtime/deployment-steps")
+            async () => await import("#app-runtime/deployment-steps")
           );
 
           yield* warmRuntimeDeploymentEffect(projectId, appId).pipe(

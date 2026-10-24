@@ -52,7 +52,7 @@ export const handlePlatformRequest = async ({
 
   if (request.method === "GET" && pathname === "/api/platform/runtime/keys") {
     const { appRuntimeKeysResponse } =
-      await import("@patchsmith/api-platform/routes/runtime");
+      await import("@patchsmith/api-platform/routes/app-runtime");
 
     return appRuntimeKeysResponse();
   }

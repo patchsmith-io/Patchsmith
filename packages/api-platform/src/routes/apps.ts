@@ -1,11 +1,12 @@
-import { handlerGen, middlewareGen } from "@orpc/experimental-effect";
+import { handlerGen } from "@orpc/experimental-effect";
 import { openapi } from "@orpc/openapi";
 import { ORPCError } from "@orpc/server";
-import { App, app, AppDeployment } from "@patchsmith/db/schema/apps";
+import { App, app } from "@patchsmith/db/schema/apps";
 import { eq } from "drizzle-orm";
-import { Clock, Effect } from "effect";
+import { Effect } from "effect";
 import { z } from "zod";
 
+import { AppWithCurrentDeployment, discoverAppsEffect } from "#app-discovery";
 import { appSelectorSchema } from "#app-selector";
 import { withAppAssetUrl } from "#asset-url";
 import type { Context } from "#context";
@@ -17,60 +18,20 @@ import {
   requireApp,
   requireAppInScopes,
 } from "#procedures";
-import {
-  resolveRuntimeViews,
-  runtimeViewContexts,
-  runtimeViewWarning,
-} from "#runtime/view-resolution";
-import { ViewResolutionTimings } from "#runtime/view-timing";
-import {
-  canonicalizeScope,
-  canonicalizeScopes,
-  scopeSchema,
-  scopesSchema,
-} from "#scope";
+import { canonicalizeScope, scopeSchema, scopesSchema } from "#scope";
 import {
   attempt,
   PlatformDatabase,
   PlatformIds,
-  PlatformHttp,
   PlatformRuntime,
   runPlatform,
 } from "#services";
 
 import {
-  createRuntimeSession,
   publishRuntimeMetadataEffect,
   runtimeSession,
-  runtimeViewerSchema,
-} from "./runtime";
-
-export const AppWithCurrentDeployment = App.omit({ scopeKey: true }).extend({
-  clientPath: z.url().optional(),
-  currentDeployment: AppDeployment.nullable(),
-  logoPaths: z
-    .object({ dark: z.url().optional(), light: z.url().optional() })
-    .optional(),
-  views: AppDeployment.shape.views,
-});
-
-const viewMetadata = (views: z.infer<typeof AppDeployment>["views"]) =>
-  views.map(({ staticInstances: _snapshot, ...view }) => view);
-
-/** Resolution returns each entry separately; omit snapshots from repeated app metadata. */
-const withoutStaticSnapshots = (
-  appValue: z.infer<typeof AppWithCurrentDeployment>
-) => ({
-  ...appValue,
-  currentDeployment:
-    appValue.currentDeployment === null
-      ? null
-      : {
-          ...appValue.currentDeployment,
-          views: viewMetadata(appValue.currentDeployment.views),
-        },
-  views: viewMetadata(appValue.views),
-});
+  runtimeResolve,
+} from "./app-runtime";
 
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
@@ -100,60 +61,6 @@ const createUniqueAppShortIdEffect = (projectId: string) =>
     );
   });
 
-const discoverAppsEffect = (
-  projectId: string,
-  input: z.infer<typeof paginationQuery> & {
-    scopes: z.infer<typeof scopesSchema>;
-    appIds?: string[];
-  }
-) =>
-  Effect.gen(function* discoverApps() {
-    const db = yield* PlatformDatabase;
-
-    const { page, pageSize } = input;
-    const scopes = canonicalizeScopes(input.scopes);
-
-    // Browser app filters may include missing or malformed IDs; never send those to a UUID column.
-    const appIds = input.appIds?.filter(
-      (id) => App.shape.id.safeParse(id).success
-    );
-
-    return yield* attempt(
-      async () =>
-        await db.query.app.findMany({
-          limit: pageSize + 1,
-          offset: (page - 1) * pageSize,
-          orderBy: {
-            createdAt: "desc",
-            id: "desc",
-          },
-          where: {
-            RAW: (fields, { and, eq: eqValue, or }) =>
-              and(
-                eqValue(fields.projectId, projectId),
-                or(
-                  ...scopes.map(({ scope, scopeKey }) =>
-                    and(
-                      eqValue(fields.scopeKey, scopeKey),
-                      eqValue(fields.scope, scope)
-                    )
-                  )
-                )
-              ) ?? eqValue(fields.projectId, projectId),
-            id: appIds === undefined ? undefined : { in: appIds },
-          },
-          with: {
-            currentDeployment: {
-              where: {
-                status: "published",
-              },
-              with: { app: { columns: { shortId: true } } },
-            },
-          },
-        })
-    );
-  });
-
 const listApps = cliRouter
   .meta(
     openapi({
@@ -178,150 +85,6 @@ const listApps = cliRouter
             page,
             pageSize,
           },
-        },
-      };
-    })
-  );
-
-/** Resolve all authorized installations near the app runtime, independently of host geography. */
-const runtimeResolve = protectedRouter
-  .meta(openapi({ method: "POST", path: "/apps/runtime/resolve" }))
-  .errors({ GATEWAY_TIMEOUT: { message: "View resolution timed out" } })
-  .use(
-    middlewareGen(function* requireHostResolution({ context, next }) {
-      if (context.runtimeService === true) {
-        return yield* Effect.fail(new ORPCError("FORBIDDEN"));
-      }
-
-      // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- oRPC middleware preserves downstream procedure errors unchanged.
-      return yield* next();
-    })
-  )
-  .input(
-    z.object({
-      body: z.strictObject({
-        ...runtimeViewerSchema.shape,
-        appIds: z.array(z.string().min(1).max(256)).optional(),
-        contexts: runtimeViewContexts,
-        scopes: scopesSchema,
-        slot: z.string().min(1).max(255),
-      }),
-    })
-  )
-  .output(
-    z.object({
-      body: z.discriminatedUnion("status", [
-        z.object({ status: z.literal("loading") }),
-        z.object({
-          data: z.array(
-            z.object({
-              app: AppWithCurrentDeployment,
-              data: z.unknown(),
-              key: z.string(),
-              metadata: z.record(z.string(), z.unknown()),
-            })
-          ),
-          status: z.literal("ready"),
-          warnings: z.array(runtimeViewWarning),
-        }),
-      ]),
-      headers: z.object({
-        "cache-control": z.literal("no-store"),
-        "server-timing": z.string(),
-      }),
-    })
-  )
-  .handler(
-    handlerGen(function* runtimeResolve({ context, input }) {
-      const discoveryStarted = yield* Clock.currentTimeMillis;
-      const apps = new Map<string, z.infer<typeof AppWithCurrentDeployment>>();
-      let page = 1;
-      const pageSize = 100;
-
-      for (;;) {
-        const currentPage = page;
-
-        const installations = yield* discoverAppsEffect(context.project.id, {
-          ...input.body,
-          page: currentPage,
-          pageSize,
-        }).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ORPCError("INTERNAL_SERVER_ERROR", {
-                cause,
-                message: "Unable to discover views",
-              })
-          )
-        );
-
-        for (const appValue of installations.slice(0, pageSize)) {
-          apps.set(
-            appValue.id,
-            withAppAssetUrl(appValue, context.project.shortId)
-          );
-        }
-
-        if (installations.length <= pageSize) {
-          break;
-        }
-
-        page += 1;
-      }
-
-      const instancesStarted = yield* Clock.currentTimeMillis;
-      const discoveryMs = instancesStarted - discoveryStarted;
-      const http = yield* PlatformHttp;
-      const runtimeTimings = new ViewResolutionTimings(http.fetch);
-
-      const result = yield* resolveRuntimeViews(
-        [...apps.values()],
-        input.body,
-        {
-          createSession: async (appValue) =>
-            await runtimeTimings.session(
-              async () =>
-                await createRuntimeSession(context, appValue, input.body)
-            ),
-          fetch: runtimeTimings.fetch,
-        }
-      );
-
-      const instancesMs = (yield* Clock.currentTimeMillis) - instancesStarted;
-
-      const metadata = new Map<
-        string,
-        ReturnType<typeof withoutStaticSnapshots>
-      >();
-
-      const body =
-        result.status === "ready"
-          ? {
-              ...result,
-              data: result.data.map(({ app: appValue, ...entry }) => {
-                let publicApp = metadata.get(appValue.id);
-
-                if (!publicApp) {
-                  publicApp = withoutStaticSnapshots(appValue);
-                  metadata.set(appValue.id, publicApp);
-                }
-
-                return { ...entry, app: publicApp };
-              }),
-            }
-          : result;
-
-      return {
-        body,
-        headers: {
-          "cache-control": "no-store" as const,
-          "server-timing": [
-            `views_discovery;dur=${discoveryMs.toFixed(1)}`,
-            `views_instances;dur=${instancesMs.toFixed(1)}`,
-            runtimeTimings.header(),
-          ]
-            .filter(Boolean)
-            .join(", "),
         },
       };
     })
@@ -729,7 +492,7 @@ const deploy = cliRouter
       }
 
       const { selectRuntimeDeployment } = yield* attempt(
-        async () => await import("#runtime/deployment-steps")
+        async () => await import("#app-runtime/deployment-steps")
       );
 
       const selected = yield* attempt(
@@ -803,3 +566,5 @@ export const createAppRecord = async (
     createAppRecordEffect(context, input, createdByAgent),
     context
   );
+
+export { AppWithCurrentDeployment } from "#app-discovery";

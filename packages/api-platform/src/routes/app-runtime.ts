@@ -7,18 +7,27 @@ import {
   appDeploymentMetadata,
 } from "@patchsmith/api-utils/app-auth";
 import type { App, AppDeployment } from "@patchsmith/db/schema/apps";
-import { Effect } from "effect";
+import { Clock, Effect } from "effect";
 import { z } from "zod";
 
+import { AppWithCurrentDeployment, discoverAppsEffect } from "#app-discovery";
+import { appRuntimePublicKeys } from "#app-runtime/auth";
+import {
+  resolveRuntimeViews,
+  runtimeViewContexts,
+  runtimeViewWarning,
+} from "#app-runtime/view-resolution";
+import { ViewResolutionTimings } from "#app-runtime/view-timing";
 import { appSelectorSchema } from "#app-selector";
+import { withAppAssetUrl } from "#asset-url";
 import type { Context } from "#context";
 import { env as platformEnv } from "#env";
 import { o, protectedRouter, requireAppInScopes } from "#procedures";
-import { appRuntimePublicKeys } from "#runtime/auth";
 import { scopeSchema, scopesSchema } from "#scope";
 import {
   attempt,
   PlatformDatabase,
+  PlatformHttp,
   PlatformConfig,
   PlatformRuntime,
   runPlatform,
@@ -337,3 +346,165 @@ export const createRuntimeSession = async (
   input: z.infer<typeof runtimeViewerSchema> & RuntimeHookGrant
 ) =>
   await runPlatform(createRuntimeSessionEffect(context, app, input), context);
+
+const viewMetadata = (views: z.infer<typeof AppDeployment>["views"]) =>
+  views.map(({ staticInstances: _snapshot, ...view }) => view);
+
+/** Resolution returns each entry separately; omit snapshots from repeated app metadata. */
+const withoutStaticSnapshots = (
+  appValue: z.infer<typeof AppWithCurrentDeployment>
+) => ({
+  ...appValue,
+  currentDeployment:
+    appValue.currentDeployment === null
+      ? null
+      : {
+          ...appValue.currentDeployment,
+          views: viewMetadata(appValue.currentDeployment.views),
+        },
+  views: viewMetadata(appValue.views),
+});
+
+/** Resolve all authorized installations near the app runtime, independently of host geography. */
+export const runtimeResolve = protectedRouter
+  .meta(openapi({ method: "POST", path: "/apps/runtime/resolve" }))
+  .errors({ GATEWAY_TIMEOUT: { message: "View resolution timed out" } })
+  .use(
+    middlewareGen(function* requireHostResolution({ context, next }) {
+      if (context.runtimeService === true) {
+        return yield* Effect.fail(new ORPCError("FORBIDDEN"));
+      }
+
+      // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- oRPC middleware preserves downstream procedure errors unchanged.
+      return yield* next();
+    })
+  )
+  .input(
+    z.object({
+      body: z.strictObject({
+        ...runtimeViewerSchema.shape,
+        appIds: z.array(z.string().min(1).max(256)).optional(),
+        contexts: runtimeViewContexts,
+        scopes: scopesSchema,
+        slot: z.string().min(1).max(255),
+      }),
+    })
+  )
+  .output(
+    z.object({
+      body: z.discriminatedUnion("status", [
+        z.object({ status: z.literal("loading") }),
+        z.object({
+          data: z.array(
+            z.object({
+              app: AppWithCurrentDeployment,
+              data: z.unknown(),
+              key: z.string(),
+              metadata: z.record(z.string(), z.unknown()),
+            })
+          ),
+          status: z.literal("ready"),
+          warnings: z.array(runtimeViewWarning),
+        }),
+      ]),
+      headers: z.object({
+        "cache-control": z.literal("no-store"),
+        "server-timing": z.string(),
+      }),
+    })
+  )
+  .handler(
+    handlerGen(function* runtimeResolve({ context, input }) {
+      const discoveryStarted = yield* Clock.currentTimeMillis;
+      const apps = new Map<string, z.infer<typeof AppWithCurrentDeployment>>();
+      let page = 1;
+      const pageSize = 100;
+
+      for (;;) {
+        const currentPage = page;
+
+        const installations = yield* discoverAppsEffect(context.project.id, {
+          ...input.body,
+          page: currentPage,
+          pageSize,
+        }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ORPCError("INTERNAL_SERVER_ERROR", {
+                cause,
+                message: "Unable to discover views",
+              })
+          )
+        );
+
+        for (const appValue of installations.slice(0, pageSize)) {
+          apps.set(
+            appValue.id,
+            withAppAssetUrl(appValue, context.project.shortId)
+          );
+        }
+
+        if (installations.length <= pageSize) {
+          break;
+        }
+
+        page += 1;
+      }
+
+      const instancesStarted = yield* Clock.currentTimeMillis;
+      const discoveryMs = instancesStarted - discoveryStarted;
+      const http = yield* PlatformHttp;
+      const runtimeTimings = new ViewResolutionTimings(http.fetch);
+
+      const result = yield* resolveRuntimeViews(
+        [...apps.values()],
+        input.body,
+        {
+          createSession: async (appValue) =>
+            await runtimeTimings.session(
+              async () =>
+                await createRuntimeSession(context, appValue, input.body)
+            ),
+          fetch: runtimeTimings.fetch,
+        }
+      );
+
+      const instancesMs = (yield* Clock.currentTimeMillis) - instancesStarted;
+
+      const metadata = new Map<
+        string,
+        ReturnType<typeof withoutStaticSnapshots>
+      >();
+
+      const body =
+        result.status === "ready"
+          ? {
+              ...result,
+              data: result.data.map(({ app: appValue, ...entry }) => {
+                let publicApp = metadata.get(appValue.id);
+
+                if (!publicApp) {
+                  publicApp = withoutStaticSnapshots(appValue);
+                  metadata.set(appValue.id, publicApp);
+                }
+
+                return { ...entry, app: publicApp };
+              }),
+            }
+          : result;
+
+      return {
+        body,
+        headers: {
+          "cache-control": "no-store" as const,
+          "server-timing": [
+            `views_discovery;dur=${discoveryMs.toFixed(1)}`,
+            `views_instances;dur=${instancesMs.toFixed(1)}`,
+            runtimeTimings.header(),
+          ]
+            .filter(Boolean)
+            .join(", "),
+        },
+      };
+    })
+  );

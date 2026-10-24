@@ -11,8 +11,8 @@ import {
 import type { Storage } from "@patchsmith/storage";
 import { Effect } from "effect";
 
+import { runtimeProjectAccessEffect } from "#app-runtime/access";
 import { PlatformDependencyError } from "#errors";
-import { runtimeProjectAccessEffect } from "#runtime/access";
 import { canonicalizeScope } from "#scope";
 import {
   attempt,

@@ -12,15 +12,15 @@ import { Cause, Effect, Exit, Fiber } from "effect";
 import { TestClock } from "effect/testing";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
+import { appRuntimePublicKeys } from "#app-runtime/auth";
+import { warmRuntimeInstallationEffect } from "#app-runtime/publication";
 import type { Context } from "#context";
 import { env } from "#env";
-import { appRuntimePublicKeys } from "#runtime/auth";
-import { warmRuntimeInstallationEffect } from "#runtime/publication";
 import { attempt, runPlatform } from "#services";
 import { createPlatformFixture } from "#test/platform";
 import { testServices } from "#test/services";
 
-import { getRuntimeBundle, handlePublicRuntimeRequest } from "./runtime";
+import { getRuntimeBundle, handlePublicRuntimeRequest } from "./app-runtime";
 
 const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
 

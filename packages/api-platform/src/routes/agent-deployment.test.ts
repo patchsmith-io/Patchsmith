@@ -429,7 +429,7 @@ it("maps missing credentials to 401 and unavailable dependencies to 503", () => 
 });
 
 it("keeps runtime-only metadata private from CLI credentials", async () => {
-  const { getRuntimeBundle } = await import("./runtime");
+  const { getRuntimeBundle } = await import("./app-runtime");
   const input = request(`/apps/${authorizedAppId}/runtime`);
   const context = await createContext({ request: input, ...services });
 
