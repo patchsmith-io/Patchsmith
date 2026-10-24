@@ -1,0 +1,89 @@
+packages/api-platform/README.md
+  s_2fbdcfa57a9b25::t_e67c58736af87f 23-50
+packages/api-platform/package.json
+  s_2fbdcfa57a9b25::t_6b8b9872215f0a 38
+packages/api-platform/src/agent-stream-token.ts
+  s_2fbdcfa57a9b25::t_4ad3d07cd4d8dc 11-12,14,20,28-29,31-34
+packages/api-platform/src/app-agent-mcp-isolation.test.ts
+  s_2fbdcfa57a9b25::t_6aea005620fc24 6,17-20,34-39,128-136,287,327,330
+packages/api-platform/src/app-agent-mcp.test.ts
+  s_2fbdcfa57a9b25::t_02da8794aee914 3-41,43-45,47-54,56,58-62,108-112,114-139,141-142,145-151,153,160-162,164-178,180-182,184-187,190-197,199,201,205-207,209-210,214-215,217,219-223,227,229-231,233-256,259-260,262-266,268,272-274,277-282,284-287,289-295,297-302,304-311,314-316,318-320,322-326,328-336,338-348,350,352-353,355-421,423-426,428,430-432,435-436,438,442-443,445-456,460-461,463-467,471,473-478,480,483,487-488
+packages/api-platform/src/app-agent-mcp.ts
+  s_2fbdcfa57a9b25::t_a4feb2b8a67762 9,16,19-26,28,116-129,131,133-134,137-172,175-326
+packages/api-platform/src/assets.test.ts
+  s_2fbdcfa57a9b25::t_963fda53a07630 6-13,15-29,69,97,119,154,269,299
+packages/api-platform/src/assets.ts
+  s_2fbdcfa57a9b25::t_6886864d1f564b 15-17,49-50,114-115,118,120-122,124-133,136
+packages/api-platform/src/cli-token.test.ts
+  s_2fbdcfa57a9b25::t_67dc30227dcc9a 2-16,18-22,25-29,31-33,36-39,42-49,51-56,60-61,64-65,67,73,75-76,78,80-93
+packages/api-platform/src/cli-token.ts
+  s_2fbdcfa57a9b25::t_8135f30efe1056 3,5-12,14-15,17,21-25,27-34,36-47,49-51,54-79,82-88,90-97,99-100
+packages/api-platform/src/context.test.ts
+  s_2fbdcfa57a9b25::t_f143cf149584e4 1-127
+packages/api-platform/src/context.ts
+  s_2fbdcfa57a9b25::t_f24b2f6f20083d 12,14-28,38-41,43-46,49-53,59-64,68-72,75-78,80,87-88,91,93-102,104-105,108-115,117-129,132-136,141,144-145,147-150,153-158,161,164-170,173-175,179-182,185-190,201-216
+packages/api-platform/src/errors.ts
+  s_2fbdcfa57a9b25::t_91d5f81d4fcc8f 1-28
+packages/api-platform/src/mcp.integration.test.ts
+  s_2fbdcfa57a9b25::t_38b4d8daa547fe 5,7-8,10,15-16,51-53,75-79,82
+packages/api-platform/src/procedures.ts
+  s_2fbdcfa57a9b25::t_452699724c7d4b 1,5,8,11-17,35,39-76,79-112,115,120-127,131-134,145-172,177-179,183,185,188-190,194-197,204,208-210,214-217,224,230-232
+packages/api-platform/src/routes/agent-deployment.test.ts
+  s_2fbdcfa57a9b25::t_8aed199ea243b1 8,15,17,27-33,39,41,63-64,97,137,140-157,322-325,341,434
+packages/api-platform/src/routes/app-agent.test.ts
+  s_2fbdcfa57a9b25::t_92cbbf72f6195e 10-18,24-27,37,40-43,46,49-50,52-54,75,91-92,102-128,271,325,347,364,412,490,498,564-565,760,780
+packages/api-platform/src/routes/app-agent.ts
+  s_2fbdcfa57a9b25::t_c1d1d38322d653 1,8,18,26-27,29-30,32,99-101,103-119,132-135,137-140,142-146,148-154,157-160,162-190,193-197,199-220,222-223,231-232,234-239,241-271,273-288
+packages/api-platform/src/routes/apps.test.ts
+  s_2fbdcfa57a9b25::t_77ac436a72cf10 20,32,34,36,39-47,51,59,76-78,80,117,128-141,239-241,243-244,246-255,473-476,478-479,517-519,521,523-527,529-530,591,663,1047-1051,1574,1836,1850-1851
+packages/api-platform/src/routes/apps.ts
+  s_2fbdcfa57a9b25::t_c28406aac57ca7 32-39,43,78-84,86-91,93-95,98-101,103,109-111,113-119,121-131,133-154,166-169,171-180,182-184,244-256,274-275,355,359-383,385-391,393-398,409-415,430-432,434-448,450,452-457,460-490,492-512,514-520,522-529,531-538,554-556,558-567,569-574,577-593,595-608,629-646,648-662,682-688,691,694,696-708,710-714,716-723,725-729,731-733,735-745,747-764,772-773,776-783,796-805
+packages/api-platform/src/routes/cli-auth.test.ts
+  s_2fbdcfa57a9b25::t_f23f6df44b58a9 5,18,37-38,40,88,237-346
+packages/api-platform/src/routes/cli-auth.ts
+  s_2fbdcfa57a9b25::t_cc2db53f97ccfe 3,9,12,15,31-40,43-44,87-115,133-170,172-174,185-216,218-220,244-268,270-276,278-280,282-284,286-287,291,293-295,298-302,305-311,313-318,321-388,391-399,410-430
+packages/api-platform/src/routes/deployments.test.ts
+  s_2fbdcfa57a9b25::t_eba203ccd1ece5 15,27,57-59,61,98,102-106,329,534-536,769-771,813,857,908,1001,1077,1138,1156-1172,1188-1244
+packages/api-platform/src/routes/deployments.ts
+  s_2fbdcfa57a9b25::t_ec15dbce0b4435 1,20,34-39,41,191-193,215,269,272-274,281-291,295-302,304-307,318,325-326,328,340-342,348-349,352,372-390,392-399,401-403,452-469,471-526,528-547,549-562,564-568,570-606,608-613,615,617-619,621-623,625-629,631-640,642-643,645-651,657-658,660-662,665,667-669,672-676,679-681,683-687,689-691,693-696,698,700-709,711-713,715-720,722-723,750-764,766-772,774-779,781-784,786-792,794,796-802,804-953,955-962,964-969,972-983,986-988,990-1000,1002-1004,1006-1012,1020-1021,1024-1026
+packages/api-platform/src/routes/runtime.test.ts
+  s_2fbdcfa57a9b25::t_c8b8b61f6f6384 1-2,4-13,16-21,25,27-35,37-39,41-61,63,65-66,71,77,80-81,86,88-89,94,97-104,106-162,164-166,169-173,175-201,205-213,218-289
+packages/api-platform/src/routes/runtime.ts
+  s_2fbdcfa57a9b25::t_2706dd1aaac9f3 1,10,15,17,19-29,31,46-47,56,104,108-110,112,114-120,122-128,130-133,135-137,139-151,153-154,156-158,160-185,210-220,231-262,265-311,313-323,328-329,331,333-339
+packages/api-platform/src/runtime/access.ts
+  s_2fbdcfa57a9b25::t_c5ec8e00ab439d 1,3-6,9-48,52
+packages/api-platform/src/runtime/auth.test.ts
+  s_2fbdcfa57a9b25::t_0d9008f73e0559 2,4-6,8-11,14,28,44-49,67
+packages/api-platform/src/runtime/auth.ts
+  s_2fbdcfa57a9b25::t_105a022852e6d8 7,10,14,16,19-21,39,50-51,64,78-116
+packages/api-platform/src/runtime/deployment-steps.test.ts
+  s_2fbdcfa57a9b25::t_1137681d80be17 1-5,9-10,12-13,15-16,18-22,140-299
+packages/api-platform/src/runtime/deployment-steps.ts
+  s_2fbdcfa57a9b25::t_364b8a9bf5dbfc 3,6,8-11,54,57-75,77-80,82,85-107,109,111-117,119-125,127-129,131-148,150-162,165,167-174,176-192
+packages/api-platform/src/runtime/publication.ts
+  s_2fbdcfa57a9b25::t_b80f37afc768e4 2,4-5,8,11-66,69-73
+packages/api-platform/src/services.test.ts
+  s_2fbdcfa57a9b25::t_ebcc629789c040 1-79
+packages/api-platform/src/services.ts
+  s_2fbdcfa57a9b25::t_649a598a3bf52c 1-290
+packages/api-platform/src/test/platform.ts
+  s_2fbdcfa57a9b25::t_c98303eac4694f 1-62
+packages/api-platform/src/test/services.ts
+  s_2fbdcfa57a9b25::t_8b32d5274404aa 1-76
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a1050bdc1f242f71dbde5c255944ae6db68fe041",
+  "prompts": {},
+  "sessions": {
+    "s_2fbdcfa57a9b25": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a16dab-0fd7-7612-9b38-049525ff9cae",
+        "model": "unknown"
+      },
+      "human_author": "Alfie Jones <alfie.jones@hotmail.co.uk>"
+    }
+  }
+}
